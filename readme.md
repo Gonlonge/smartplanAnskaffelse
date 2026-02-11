@@ -2,6 +2,8 @@
 
 A React application for procurement management, built with Vite and Material-UI. Handles tenders, projects, supplier invitations, bids, contracts, and compliance.
 
+<img width="1561" height="916" alt="1" src="https://github.com/user-attachments/assets/1d8c24eb-59b1-4131-93d2-d061795a25fe" />
+
 ---
 
 ## How This Website Works / Slik fungerer nettstedet
@@ -198,6 +200,7 @@ Ensure your Firebase project has:
 
 See the [Firebase documentation](https://firebase.google.com/docs).
 
+<img width="1160" height="838" alt="2" src="https://github.com/user-attachments/assets/0afc7d86-d26a-4a2b-9bbf-a6b25d88ca39" />
 
 
 
