@@ -1,0 +1,27 @@
+/* Global CSS Reset and Base Styles */
+/* Note: Most styling is handled by MUI theme - this file contains minimal base styles */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f8f9fa 0%, #f1f3f5 100%);
+  background-attachment: fixed; /* Keeps gradient fixed on scroll */
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+

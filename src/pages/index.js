@@ -1,0 +1,20 @@
+// Pages exports
+export { default as Login } from "./Login";
+export { default as Register } from "./Register";
+export { default as Dashboard } from "./Dashboard";
+export { default as Tenders } from "./Tenders";
+export { default as TenderCreate } from "./TenderCreate";
+export { default as TenderDetails } from "./TenderDetails";
+export { default as BidSubmit } from "./BidSubmit";
+export { default as ContractView } from "./ContractView";
+export { default as Projects } from "./Projects";
+export { default as ProjectCreate } from "./ProjectCreate";
+export { default as ProjectDetails } from "./ProjectDetails";
+export { default as Invitations } from "./Invitations";
+export { default as Contacts } from "./Contacts";
+export { default as Suppliers } from "./Suppliers";
+export { default as Compliance } from "./Compliance";
+export { default as Complaints } from "./Complaints";
+export { default as Profile } from "./Profile";
+export { default as Notifications } from "./Notifications";
+export { default as AdminUsers } from "./AdminUsers";

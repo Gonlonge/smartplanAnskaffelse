@@ -1,0 +1,38 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Tender documents
+    match /tenders/{tenderId}/documents/{fileName} {
+      // Senders can read/write documents for tenders they created
+      // Receivers can read documents for tenders they're invited to
+      // Note: We can't check Firestore data in Storage rules, so we rely on
+      // Firestore rules to control access. Storage rules provide an additional
+      // layer but may need to be more permissive.
+      
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+    
+    // Bid documents
+    match /tenders/{tenderId}/bids/{bidId}/documents/{fileName} {
+      // Users can read bid documents for tenders they have access to
+      // Suppliers can write their own bid documents
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+    
+    // Deny all other access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

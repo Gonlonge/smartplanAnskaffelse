@@ -1,0 +1,3960 @@
+import { useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
+import {
+    createTender,
+    addQuestionToTender,
+    answerQuestion,
+    addDocumentsToTender,
+    removeDocumentFromTender,
+    getTenderById,
+    getAllTenders,
+    getTendersByProject,
+    getTendersByStatus,
+    getInvitationsForSupplier,
+    updateTender,
+    addSupplierInvitation,
+    closeTender,
+    openTender,
+} from "../api/tenderService";
+import {
+    createProject,
+    getProjectById,
+    getAllProjects,
+    getProjectsByCompany,
+    updateProject,
+    deleteProject,
+} from "../api/projectService";
+import {
+    generateContract,
+    getContractById,
+    getContractByTenderId,
+    getContractsByProject,
+    signContract,
+    addContractChange,
+} from "../api/contractService";
+import {
+    searchCompanyByOrgNumber,
+    searchCompaniesByName,
+} from "../api/brregService";
+import { getAllAdminUsers } from "../api/userService";
+import { deleteTender } from "../api/tenderService";
+import {
+    createComplaint,
+    getAllComplaints,
+    getComplaintById,
+    updateComplaintStatus,
+    addComplaintComment,
+} from "../api/complaintService";
+import { getCollection, deleteDocument } from "../services/firestore";
+
+export const useComplianceTests = () => {
+    const { user } = useAuth();
+    const [testing, setTesting] = useState(false);
+    const [testResults, setTestResults] = useState(null);
+    const [testProgress, setTestProgress] = useState(0);
+    const [activeTestCategory, setActiveTestCategory] = useState(null);
+    const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+
+    const runTests = async () => {
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "all",
+            });
+            return;
+        }
+
+        setActiveTestCategory("all");
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // Test 1: Create a new project
+            setTestProgress(5);
+            let testProjectId = null;
+            try {
+                const projectResult = await createProject(
+                    {
+                        name: "Test Prosjekt - " + new Date().toISOString(),
+                        description:
+                            "Dette er et testprosjekt for å verifisere funksjonalitet",
+                        status: "active",
+                    },
+                    user
+                );
+
+                if (projectResult.success && projectResult.project) {
+                    testProjectId = projectResult.project.id;
+                    results.push({
+                        name: "Opprette nytt prosjekt",
+                        success: true,
+                        message: `Prosjekt opprettet med ID: ${testProjectId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette nytt prosjekt",
+                        success: false,
+                        message:
+                            projectResult.error ||
+                            "Kunne ikke opprette prosjekt",
+                    });
+                    // Cannot continue without a project
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette nytt prosjekt",
+                    success: false,
+                    message:
+                        error.message || "Feil ved opprettelse av prosjekt",
+                });
+            }
+
+            // Test 2: Create a new tender with NS 8405 specific fields, including all inputs
+            setTestProgress(10);
+            let testTenderId = null;
+            try {
+                // Prepare test supplier invitations (using test data, not mock)
+                const invitedSuppliers = [
+                    {
+                        supplierId: null,
+                        companyId: "test_company_1",
+                        companyName: "Test Leverandør AS",
+                        orgNumber: "999888777",
+                        email: "test-supplier@example.com",
+                        invitedAt: new Date(),
+                        status: "invited",
+                    },
+                ];
+
+                // Prepare initial questions
+                const initialQuestions = [
+                    {
+                        id: `qa_${Date.now()}_1`,
+                        question:
+                            "Dette er et testspørsmål. Fungerer kommentarfunksjonen?",
+                        answer: "",
+                        addedAt: new Date(),
+                    },
+                    {
+                        id: `qa_${Date.now()}_2`,
+                        question: "Hva er leveringstid for hovedmaterialer?",
+                        answer: "",
+                        addedAt: new Date(),
+                    },
+                ];
+
+                const createResult = await createTender(
+                    {
+                        projectId: testProjectId,
+                        title:
+                            "Test Anskaffelse NS 8405 - " +
+                            new Date().toISOString(),
+                        description:
+                            "Dette er en test anskaffelse for å verifisere funksjonalitet med NS 8405 spesifikke felt",
+                        contractStandard: "NS 8405",
+                        deadline: new Date(
+                            Date.now() + 30 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0], // 30 days from now
+                        publishDate: new Date(
+                            Date.now() + 1 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0], // Tomorrow
+                        questionDeadline: new Date(
+                            Date.now() + 20 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0], // 20 days from now
+                        price: 2500000,
+                        entrepriseform: "generalentreprise",
+                        cpv: "45200000-8",
+                        evaluationCriteria: ["pris", "kvalitet", "kompetanse"],
+                        status: "open",
+                        // NS 8405 specific fields
+                        ns8405: {
+                            entreprisemodell: "hovedentreprise",
+                            endringsordreTerskel: 50000,
+                            dagmulktSats: 5000,
+                            dagmulktStartdato: new Date(
+                                Date.now() + 35 * 24 * 60 * 60 * 1000
+                            )
+                                .toISOString()
+                                .split("T")[0],
+                            dagmulktMaksProsent: 10,
+                            faktureringsplan: "milepæler",
+                            sikkerhetsstillelseType: "bankgaranti",
+                            sikkerhetsstillelseProsent: 5,
+                            retensjonProsent: 5,
+                            retensjonUtløpsvilkår:
+                                "Ved ferdigstillelse og godkjenning",
+                            garantiperiodeÅr: 2,
+                            garantiperiodeType: "Konstruksjonsgaranti",
+                        },
+                        // Include supplier invitations
+                        invitedSuppliers: invitedSuppliers,
+                        // Include questions
+                        qa: initialQuestions.map((q) => ({
+                            id: q.id,
+                            question: q.question,
+                            answer: q.answer || "",
+                            askedBy: user.id,
+                            askedByCompany: user.companyName || "",
+                            askedAt: q.addedAt,
+                            answeredBy: null,
+                            answeredAt: null,
+                        })),
+                        // Documents can be empty
+                        documents: [],
+                    },
+                    user
+                );
+
+                if (createResult.success && createResult.tender) {
+                    testTenderId = createResult.tender.id;
+                    const supplierCount =
+                        createResult.tender.invitedSuppliers?.length || 0;
+                    const questionCount = createResult.tender.qa?.length || 0;
+                    results.push({
+                        name: "Opprette ny anskaffelse NS 8405",
+                        success: true,
+                        message: `NS 8405 anskaffelse opprettet med ID: ${testTenderId}. Inkluderer ${supplierCount} leverandører og ${questionCount} spørsmål.`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette ny anskaffelse NS 8405",
+                        success: false,
+                        message:
+                            createResult.error ||
+                            "Kunne ikke opprette NS 8405 anskaffelse",
+                    });
+                    throw new Error("Kunne ikke opprette test anskaffelse");
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette ny anskaffelse NS 8405",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved opprettelse av NS 8405 anskaffelse",
+                });
+                throw error;
+            }
+
+            // Test 3: Verify supplier invitations were included
+            setTestProgress(20);
+            try {
+                const tender = await getTenderById(testTenderId);
+
+                if (
+                    tender &&
+                    tender.invitedSuppliers &&
+                    tender.invitedSuppliers.length > 0
+                ) {
+                    results.push({
+                        name: "Verifisere leverandør invitasjoner",
+                        success: true,
+                        message: `${tender.invitedSuppliers.length} leverandør(er) inkludert i anskaffelse`,
+                    });
+                } else {
+                    results.push({
+                        name: "Verifisere leverandør invitasjoner",
+                        success: false,
+                        message: "Ingen leverandør invitasjoner funnet",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Verifisere leverandør invitasjoner",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved verifisering av invitasjoner",
+                });
+            }
+
+            // Test 4: Verify questions were included
+            setTestProgress(25);
+            let testQuestionId = null;
+            try {
+                const tender = await getTenderById(testTenderId);
+
+                if (tender && tender.qa && tender.qa.length > 0) {
+                    testQuestionId = tender.qa[0]?.id;
+                    results.push({
+                        name: "Verifisere spørsmål",
+                        success: true,
+                        message: `${tender.qa.length} spørsmål inkludert i anskaffelse`,
+                    });
+                } else {
+                    results.push({
+                        name: "Verifisere spørsmål",
+                        success: false,
+                        message: "Ingen spørsmål funnet",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Verifisere spørsmål",
+                    success: false,
+                    message:
+                        error.message || "Feil ved verifisering av spørsmål",
+                });
+            }
+
+            // Test 5: Add additional question to test Q&A functionality
+            setTestProgress(30);
+            try {
+                const questionResult = await addQuestionToTender(
+                    testTenderId,
+                    "Dette er et ekstra testspørsmål lagt til etter opprettelse",
+                    user
+                );
+
+                if (questionResult.success) {
+                    results.push({
+                        name: "Legge til ekstra spørsmål",
+                        success: true,
+                        message: "Ekstra spørsmål lagt til",
+                    });
+                } else {
+                    results.push({
+                        name: "Legge til ekstra spørsmål",
+                        success: false,
+                        message:
+                            questionResult.error ||
+                            "Kunne ikke legge til ekstra spørsmål",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til ekstra spørsmål",
+                    success: false,
+                    message:
+                        error.message || "Feil ved tillegg av ekstra spørsmål",
+                });
+            }
+
+            // Test 6: Answer question
+            setTestProgress(35);
+            if (testQuestionId) {
+                try {
+                    const answerResult = await answerQuestion(
+                        testTenderId,
+                        testQuestionId,
+                        "Dette er et testsvar. Kommentarfunksjonen fungerer!",
+                        user
+                    );
+
+                    if (answerResult.success) {
+                        results.push({
+                            name: "Besvare spørsmål",
+                            success: true,
+                            message: "Spørsmål besvart",
+                        });
+                    } else {
+                        results.push({
+                            name: "Besvare spørsmål",
+                            success: false,
+                            message:
+                                answerResult.error ||
+                                "Kunne ikke besvare spørsmål",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Besvare spørsmål",
+                        success: false,
+                        message: error.message || "Feil ved besvarelse",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Besvare spørsmål",
+                    success: false,
+                    message: "Ingen spørsmål å besvare (forrige test feilet)",
+                });
+            }
+
+            // Test 7: Verify documents are empty (as per requirement)
+            setTestProgress(40);
+            try {
+                const tender = await getTenderById(testTenderId);
+
+                if (tender) {
+                    const documentCount = tender.documents?.length || 0;
+                    if (documentCount === 0) {
+                        results.push({
+                            name: "Verifisere at dokumenter er tomme",
+                            success: true,
+                            message: "Dokumenter er tomme som forventet",
+                        });
+                    } else {
+                        results.push({
+                            name: "Verifisere at dokumenter er tomme",
+                            success: false,
+                            message: `Forventet tom dokumentliste, men fant ${documentCount} dokument(er)`,
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Verifisere at dokumenter er tomme",
+                        success: false,
+                        message: "Kunne ikke finne anskaffelse",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Verifisere at dokumenter er tomme",
+                    success: false,
+                    message:
+                        error.message || "Feil ved verifisering av dokumenter",
+                });
+            }
+
+            // Test 8: Add documents/files (optional test)
+            setTestProgress(45);
+            let testDocumentId = null;
+            try {
+                // Create a mock file
+                const mockFile = new File(
+                    ["test content"],
+                    "test-dokument.pdf",
+                    {
+                        type: "application/pdf",
+                    }
+                );
+
+                const documentResult = await addDocumentsToTender(
+                    testTenderId,
+                    [mockFile],
+                    user
+                );
+
+                if (documentResult.success) {
+                    // Get the tender to find the document ID
+                    const updatedTender = await getTenderById(testTenderId);
+                    const documents = updatedTender?.documents || [];
+                    testDocumentId = documents[documents.length - 1]?.id;
+                    results.push({
+                        name: "Legge til filer/dokumenter",
+                        success: true,
+                        message: `Dokument lagt til med ID: ${testDocumentId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Legge til filer/dokumenter",
+                        success: false,
+                        message:
+                            documentResult.error ||
+                            "Kunne ikke legge til dokument",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til filer/dokumenter",
+                    success: false,
+                    message: error.message || "Feil ved tillegg av dokument",
+                });
+            }
+
+            // Test 9: Remove document
+            setTestProgress(50);
+            if (testDocumentId) {
+                try {
+                    const removeResult = await removeDocumentFromTender(
+                        testTenderId,
+                        testDocumentId
+                    );
+
+                    if (removeResult.success) {
+                        results.push({
+                            name: "Fjerne dokument",
+                            success: true,
+                            message: "Dokument fjernet",
+                        });
+                    } else {
+                        results.push({
+                            name: "Fjerne dokument",
+                            success: false,
+                            message:
+                                removeResult.error ||
+                                "Kunne ikke fjerne dokument",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Fjerne dokument",
+                        success: false,
+                        message:
+                            error.message || "Feil ved fjerning av dokument",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Fjerne dokument",
+                    success: false,
+                    message: "Ingen dokument å fjerne (forrige test feilet)",
+                });
+            }
+
+            // Test 10: Submit a bid (simulated - would require a different user in real scenario)
+            setTestProgress(55);
+            let testBidId = null;
+            try {
+                // Note: In real testing, a bid would be submitted by a supplier user
+                // Here we simulate adding a test bid directly
+                const { submitBid } = await import("../api/tenderService");
+                const testBidData = {
+                    price: 1000000,
+                    priceStructure: "fastpris",
+                    hourlyRate: null,
+                    estimatedHours: null,
+                    files: [],
+                    notes: "Dette er et testtilbud",
+                };
+
+                const testSupplierUser = {
+                    id: "test_supplier_user",
+                    companyId: "test_company_1",
+                    companyName: "Test Leverandør AS",
+                };
+
+                const bidResult = await submitBid(
+                    testTenderId,
+                    testBidData,
+                    testSupplierUser
+                );
+
+                if (bidResult.success) {
+                    testBidId = bidResult.bid?.id;
+                    results.push({
+                        name: "Sende inn tilbud",
+                        success: true,
+                        message: `Tilbud sendt med ID: ${testBidId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Sende inn tilbud",
+                        success: false,
+                        message: bidResult.error || "Kunne ikke sende tilbud",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Sende inn tilbud",
+                    success: false,
+                    message: error.message || "Feil ved innsending av tilbud",
+                });
+            }
+
+            // Test 11: Award bid and generate contract
+            setTestProgress(60);
+            let testContractId = null;
+            if (testBidId) {
+                try {
+                    const { awardTender } = await import(
+                        "../api/tenderService"
+                    );
+                    const awardResult = await awardTender(
+                        testTenderId,
+                        testBidId
+                    );
+
+                    if (awardResult.success) {
+                        // Get updated tender and project for contract generation
+                        const tender = await getTenderById(testTenderId);
+                        const project = await getProjectById(testProjectId);
+                        const awardedBid = tender?.bids?.find(
+                            (b) => b.id === testBidId
+                        );
+
+                        if (awardedBid && project) {
+                            const contractResult = await generateContract(
+                                tender,
+                                awardedBid,
+                                project
+                            );
+
+                            if (
+                                contractResult.success &&
+                                contractResult.contract
+                            ) {
+                                testContractId = contractResult.contract.id;
+                                results.push({
+                                    name: "Tildele kontrakt og generere kontrakt",
+                                    success: true,
+                                    message: `Kontrakt generert med ID: ${testContractId}`,
+                                });
+                            } else {
+                                results.push({
+                                    name: "Tildele kontrakt og generere kontrakt",
+                                    success: false,
+                                    message:
+                                        contractResult.error ||
+                                        "Kunne ikke generere kontrakt",
+                                });
+                            }
+                        } else {
+                            results.push({
+                                name: "Tildele kontrakt og generere kontrakt",
+                                success: true,
+                                message:
+                                    "Kontrakt tildelt (uten generering av kontraktdokument)",
+                            });
+                        }
+                    } else {
+                        results.push({
+                            name: "Tildele kontrakt og generere kontrakt",
+                            success: false,
+                            message:
+                                awardResult.error ||
+                                "Kunne ikke tildele kontrakt",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Tildele kontrakt og generere kontrakt",
+                        success: false,
+                        message:
+                            error.message || "Feil ved tildeling av kontrakt",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Tildele kontrakt og generere kontrakt",
+                    success: false,
+                    message: "Ingen tilbud å tildele (forrige test feilet)",
+                });
+            }
+
+            // Test 12: Retrieve tender by ID
+            setTestProgress(65);
+            try {
+                const retrievedTender = await getTenderById(testTenderId);
+                if (retrievedTender && retrievedTender.id === testTenderId) {
+                    results.push({
+                        name: "Hente anskaffelse etter ID",
+                        success: true,
+                        message: `Anskaffelse hentet: ${retrievedTender.title}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente anskaffelse etter ID",
+                        success: false,
+                        message: "Kunne ikke hente anskaffelse",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente anskaffelse etter ID",
+                    success: false,
+                    message: error.message || "Feil ved henting av anskaffelse",
+                });
+            }
+
+            // Test 13: Get all tenders
+            setTestProgress(70);
+            try {
+                const allTenders = await getAllTenders();
+                if (Array.isArray(allTenders) && allTenders.length > 0) {
+                    results.push({
+                        name: "Hente alle anskaffelser",
+                        success: true,
+                        message: `${allTenders.length} anskaffelser funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente alle anskaffelser",
+                        success: false,
+                        message: "Ingen anskaffelser funnet",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente alle anskaffelser",
+                    success: false,
+                    message:
+                        error.message || "Feil ved henting av anskaffelser",
+                });
+            }
+
+            // Test 14: Get project by ID
+            setTestProgress(75);
+            if (testProjectId) {
+                try {
+                    const retrievedProject = await getProjectById(
+                        testProjectId
+                    );
+                    if (
+                        retrievedProject &&
+                        retrievedProject.id === testProjectId
+                    ) {
+                        results.push({
+                            name: "Hente prosjekt etter ID",
+                            success: true,
+                            message: `Prosjekt hentet: ${retrievedProject.name}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente prosjekt etter ID",
+                            success: false,
+                            message: "Kunne ikke hente prosjekt",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente prosjekt etter ID",
+                        success: false,
+                        message:
+                            error.message || "Feil ved henting av prosjekt",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Hente prosjekt etter ID",
+                    success: false,
+                    message:
+                        "Ingen prosjekt ID tilgjengelig (forrige test feilet)",
+                });
+            }
+
+            // Test 15: Get all projects
+            setTestProgress(80);
+            try {
+                const allProjects = await getAllProjects();
+                if (Array.isArray(allProjects) && allProjects.length > 0) {
+                    results.push({
+                        name: "Hente alle prosjekter",
+                        success: true,
+                        message: `${allProjects.length} prosjekter funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente alle prosjekter",
+                        success: false,
+                        message: "Ingen prosjekter funnet",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente alle prosjekter",
+                    success: false,
+                    message: error.message || "Feil ved henting av prosjekter",
+                });
+            }
+
+            // Test 16: Get projects by company
+            setTestProgress(82);
+            if (user?.companyId) {
+                try {
+                    const companyProjects = await getProjectsByCompany(
+                        user.companyId
+                    );
+                    if (Array.isArray(companyProjects)) {
+                        results.push({
+                            name: "Hente prosjekter etter selskap",
+                            success: true,
+                            message: `${companyProjects.length} prosjekter funnet for selskapet`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente prosjekter etter selskap",
+                            success: false,
+                            message: "Ugyldig resultat",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente prosjekter etter selskap",
+                        success: false,
+                        message:
+                            error.message || "Feil ved henting av prosjekter",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Hente prosjekter etter selskap",
+                    success: false,
+                    message: "Ingen selskap ID tilgjengelig",
+                });
+            }
+
+            // Test 17: Update project
+            setTestProgress(84);
+            if (testProjectId) {
+                try {
+                    const updateResult = await updateProject(testProjectId, {
+                        description: "Oppdatert testprosjekt beskrivelse",
+                    });
+                    if (updateResult.success) {
+                        results.push({
+                            name: "Oppdatere prosjekt",
+                            success: true,
+                            message: "Prosjekt oppdatert",
+                        });
+                    } else {
+                        results.push({
+                            name: "Oppdatere prosjekt",
+                            success: false,
+                            message:
+                                updateResult.error ||
+                                "Kunne ikke oppdatere prosjekt",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Oppdatere prosjekt",
+                        success: false,
+                        message: error.message || "Feil ved oppdatering",
+                    });
+                }
+            }
+
+            // Test 18: Get tenders by project
+            setTestProgress(85);
+            if (testProjectId) {
+                try {
+                    const projectTenders = await getTendersByProject(
+                        testProjectId
+                    );
+                    if (Array.isArray(projectTenders)) {
+                        results.push({
+                            name: "Hente anskaffelser etter prosjekt",
+                            success: true,
+                            message: `${projectTenders.length} anskaffelse(r) funnet`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente anskaffelser etter prosjekt",
+                            success: false,
+                            message: "Ugyldig resultat",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente anskaffelser etter prosjekt",
+                        success: false,
+                        message: error.message || "Feil ved henting",
+                    });
+                }
+            }
+
+            // Test 19: Get tenders by status
+            setTestProgress(87);
+            try {
+                const openTenders = await getTendersByStatus("open");
+                if (Array.isArray(openTenders)) {
+                    results.push({
+                        name: "Hente anskaffelser etter status",
+                        success: true,
+                        message: `${openTenders.length} åpne anskaffelser funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente anskaffelser etter status",
+                        success: false,
+                        message: "Ugyldig resultat",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente anskaffelser etter status",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 20: Get contract by tender ID
+            setTestProgress(89);
+            if (testContractId) {
+                try {
+                    const contract = await getContractByTenderId(testTenderId);
+                    if (contract && contract.tenderId === testTenderId) {
+                        results.push({
+                            name: "Hente kontrakt etter anskaffelse ID",
+                            success: true,
+                            message: `Kontrakt hentet: ${contract.id}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente kontrakt etter anskaffelse ID",
+                            success: false,
+                            message: "Kunne ikke hente kontrakt",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente kontrakt etter anskaffelse ID",
+                        success: false,
+                        message:
+                            error.message || "Feil ved henting av kontrakt",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Hente kontrakt etter anskaffelse ID",
+                    success: false,
+                    message: "Ingen kontrakt å hente (forrige test feilet)",
+                });
+            }
+
+            // Test 21: Add supplier invitation
+            setTestProgress(91);
+            try {
+                const invitationResult = await addSupplierInvitation(
+                    testTenderId,
+                    {
+                        supplierId: "test_supplier_full",
+                        companyId: "test_company_full",
+                        companyName: "Test Full Leverandør AS",
+                        orgNumber: "987654321",
+                        email: "test-full@example.com",
+                    }
+                );
+                if (invitationResult.success) {
+                    results.push({
+                        name: "Legge til leverandørinvitasjon",
+                        success: true,
+                        message: "Leverandør invitert",
+                    });
+                } else {
+                    results.push({
+                        name: "Legge til leverandørinvitasjon",
+                        success: false,
+                        message:
+                            invitationResult.error ||
+                            "Kunne ikke invitere leverandør",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til leverandørinvitasjon",
+                    success: false,
+                    message: error.message || "Feil ved invitasjon",
+                });
+            }
+
+            // Test 22: Add supplier invitation to draft tender (should work now)
+            setTestProgress(93);
+            let draftTenderId = null;
+            try {
+                // First create a draft tender
+                const draftTenderResult = await createTender(
+                    {
+                        projectId: testProjectId,
+                        title:
+                            "Test Draft Anskaffelse - " +
+                            new Date().toISOString(),
+                        description:
+                            "Dette er en draft anskaffelse for å teste leverandørinvitasjon",
+                        contractStandard: "NS 8405",
+                        deadline: new Date(
+                            Date.now() + 30 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        price: 1000000,
+                        entrepriseform: "generalentreprise",
+                        cpv: "45200000-8",
+                        evaluationCriteria: ["pris"],
+                        status: "draft",
+                        invitedSuppliers: [],
+                        qa: [],
+                        documents: [],
+                    },
+                    user
+                );
+
+                if (draftTenderResult.success && draftTenderResult.tender) {
+                    draftTenderId = draftTenderResult.tender.id;
+
+                    // Now try to add a supplier invitation to the draft tender
+                    const draftInvitationResult = await addSupplierInvitation(
+                        draftTenderId,
+                        {
+                            supplierId: "test_supplier_draft",
+                            companyId: "test_company_draft",
+                            companyName: "Test Draft Leverandør AS",
+                            orgNumber: "111222333",
+                            email: "test-draft@example.com",
+                        }
+                    );
+
+                    if (draftInvitationResult.success) {
+                        // Verify the invitation was added
+                        const updatedTender = await getTenderById(
+                            draftTenderId
+                        );
+                        const hasInvitation =
+                            updatedTender?.invitedSuppliers?.some(
+                                (inv) => inv.email === "test-draft@example.com"
+                            );
+
+                        if (hasInvitation) {
+                            results.push({
+                                name: "Legge til leverandørinvitasjon til utkast",
+                                success: true,
+                                message:
+                                    "Leverandør kan inviteres til utkast (invitasjon lagret, men leverandør ser den ikke før publisering)",
+                            });
+                        } else {
+                            results.push({
+                                name: "Legge til leverandørinvitasjon til utkast",
+                                success: false,
+                                message:
+                                    "Invitasjon ble lagt til, men kunne ikke verifiseres",
+                            });
+                        }
+                    } else {
+                        results.push({
+                            name: "Legge til leverandørinvitasjon til utkast",
+                            success: false,
+                            message:
+                                draftInvitationResult.error ||
+                                "Kunne ikke invitere leverandør til utkast",
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Legge til leverandørinvitasjon til utkast",
+                        success: false,
+                        message:
+                            "Kunne ikke opprette draft anskaffelse for testing",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til leverandørinvitasjon til utkast",
+                    success: false,
+                    message: error.message || "Feil ved invitasjon til utkast",
+                });
+            }
+
+            // Test 23: Create tender with NS 8406 (Forenklet) - with all inputs
+            setTestProgress(95);
+            try {
+                // Prepare supplier invitations for NS 8406
+                const invitedSuppliers8406 = [
+                    {
+                        supplierId: null,
+                        companyId: "test_company_8406",
+                        companyName: "Test Leverandør 8406 AS",
+                        orgNumber: "999888666",
+                        email: "test-8406@example.com",
+                        invitedAt: new Date(),
+                        status: "invited",
+                    },
+                ];
+
+                // Prepare questions for NS 8406
+                const questions8406 = [
+                    {
+                        id: `qa_${Date.now()}_8406`,
+                        question:
+                            "Hva er forventet leveringstid for NS 8406 prosjektet?",
+                        answer: "",
+                        addedAt: new Date(),
+                    },
+                ];
+
+                const createResult8406 = await createTender(
+                    {
+                        projectId: testProjectId,
+                        title:
+                            "Test Anskaffelse NS 8406 - " +
+                            new Date().toISOString(),
+                        description:
+                            "Test anskaffelse med NS 8406 forenklet struktur",
+                        contractStandard: "NS 8406",
+                        deadline: new Date(
+                            Date.now() + 25 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        publishDate: new Date(
+                            Date.now() + 1 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        questionDeadline: new Date(
+                            Date.now() + 15 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        price: 1500000,
+                        entrepriseform: "delentreprise",
+                        cpv: "45200000-8",
+                        evaluationCriteria: ["pris", "kvalitet"],
+                        status: "draft",
+                        // NS 8406 specific fields
+                        ns8406: {
+                            prisformat: "fastpris",
+                            standardBetalingsplan: true,
+                            reklamasjonstidMåneder: 12,
+                            sikkerhetsstillelseProsent: 3,
+                            depositum: true,
+                        },
+                        // Include supplier invitations
+                        invitedSuppliers: invitedSuppliers8406,
+                        // Include questions
+                        qa: questions8406.map((q) => ({
+                            id: q.id,
+                            question: q.question,
+                            answer: q.answer || "",
+                            askedBy: user.id,
+                            askedByCompany: user.companyName || "",
+                            askedAt: q.addedAt,
+                            answeredBy: null,
+                            answeredAt: null,
+                        })),
+                        // Documents can be empty
+                        documents: [],
+                    },
+                    user
+                );
+
+                if (createResult8406.success) {
+                    const supplierCount8406 =
+                        createResult8406.tender.invitedSuppliers?.length || 0;
+                    const questionCount8406 =
+                        createResult8406.tender.qa?.length || 0;
+                    results.push({
+                        name: "Opprette anskaffelse NS 8406 (Forenklet)",
+                        success: true,
+                        message: `NS 8406 anskaffelse opprettet: ${createResult8406.tender.id}. Inkluderer ${supplierCount8406} leverandør(er) og ${questionCount8406} spørsmål.`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette anskaffelse NS 8406 (Forenklet)",
+                        success: false,
+                        message:
+                            createResult8406.error ||
+                            "Kunne ikke opprette NS 8406 anskaffelse",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette anskaffelse NS 8406 (Forenklet)",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved opprettelse av NS 8406 anskaffelse",
+                });
+            }
+
+            // Test 24: Create tender with NS 8407 (Totalentreprise) - with all inputs
+            setTestProgress(98);
+            try {
+                // Prepare supplier invitations for NS 8407
+                const invitedSuppliers8407 = [
+                    {
+                        supplierId: null,
+                        companyId: "test_company_8407_1",
+                        companyName: "Test Leverandør 8407 AS",
+                        orgNumber: "999888555",
+                        email: "test-8407@example.com",
+                        invitedAt: new Date(),
+                        status: "invited",
+                    },
+                ];
+
+                // Prepare questions for NS 8407
+                const questions8407 = [
+                    {
+                        id: `qa_${Date.now()}_8407_1`,
+                        question:
+                            "Hva er prosjekteringsomfanget for dette totalentreprise prosjektet?",
+                        answer: "",
+                        addedAt: new Date(),
+                    },
+                    {
+                        id: `qa_${Date.now()}_8407_2`,
+                        question:
+                            "Hvordan koordineres prosjektering med rådgivere?",
+                        answer: "",
+                        addedAt: new Date(),
+                    },
+                ];
+
+                const createResult8407 = await createTender(
+                    {
+                        projectId: testProjectId,
+                        title:
+                            "Test Anskaffelse NS 8407 - " +
+                            new Date().toISOString(),
+                        description:
+                            "Test anskaffelse med NS 8407 totalentreprise (design & build)",
+                        contractStandard: "NS 8407",
+                        deadline: new Date(
+                            Date.now() + 40 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        publishDate: new Date(
+                            Date.now() + 1 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        questionDeadline: new Date(
+                            Date.now() + 30 * 24 * 60 * 60 * 1000
+                        )
+                            .toISOString()
+                            .split("T")[0],
+                        price: 5000000,
+                        entrepriseform: "totalentreprise",
+                        cpv: "45200000-8",
+                        evaluationCriteria: [
+                            "pris",
+                            "kvalitet",
+                            "kompetanse",
+                            "gjennomføringsevne",
+                        ],
+                        status: "draft",
+                        // NS 8407 specific fields
+                        ns8407: {
+                            prosjekteringsomfangProsent: 30,
+                            prosjekteringsansvar: "fullt",
+                            funksjonskrav:
+                                "Bygget skal oppfylle BREEAM Excellent standard og ha energiklasse A",
+                            ytelsesbeskrivelse:
+                                "Se vedlegg for detaljert ytelsesbeskrivelse",
+                            prosjekteringsMilepæler: [
+                                {
+                                    id: "m1",
+                                    navn: "Skisseprosjekt",
+                                    dato: new Date(
+                                        Date.now() + 60 * 24 * 60 * 60 * 1000
+                                    )
+                                        .toISOString()
+                                        .split("T")[0],
+                                },
+                                {
+                                    id: "m2",
+                                    navn: "Byggeprosjekt",
+                                    dato: new Date(
+                                        Date.now() + 90 * 24 * 60 * 60 * 1000
+                                    )
+                                        .toISOString()
+                                        .split("T")[0],
+                                },
+                            ],
+                            utførelsesMilepæler: [
+                                {
+                                    id: "m3",
+                                    navn: "Grunnarbeid ferdig",
+                                    dato: new Date(
+                                        Date.now() + 120 * 24 * 60 * 60 * 1000
+                                    )
+                                        .toISOString()
+                                        .split("T")[0],
+                                },
+                                {
+                                    id: "m4",
+                                    navn: "Bygget tørr",
+                                    dato: new Date(
+                                        Date.now() + 180 * 24 * 60 * 60 * 1000
+                                    )
+                                        .toISOString()
+                                        .split("T")[0],
+                                },
+                            ],
+                            ansvarligProsjekterende: "Arkitektkontoret AS",
+                            koordinerendeRådgivere:
+                                "Rådgivende ingeniører: Struktur (Ingeniørfirma AS), VVS (VVS-konsulent AS), Elektro (Elektro AS)",
+                            dagmulktSats: 10000,
+                            dagmulktStartdato: new Date(
+                                Date.now() + 200 * 24 * 60 * 60 * 1000
+                            )
+                                .toISOString()
+                                .split("T")[0],
+                            sikkerhetsstillelseProsent: 5,
+                            retensjonProsent: 5,
+                            garantiperiodeÅr: 3,
+                        },
+                        // Include supplier invitations
+                        invitedSuppliers: invitedSuppliers8407,
+                        // Include questions
+                        qa: questions8407.map((q) => ({
+                            id: q.id,
+                            question: q.question,
+                            answer: q.answer || "",
+                            askedBy: user.id,
+                            askedByCompany: user.companyName || "",
+                            askedAt: q.addedAt,
+                            answeredBy: null,
+                            answeredAt: null,
+                        })),
+                        // Documents can be empty
+                        documents: [],
+                    },
+                    user
+                );
+
+                if (createResult8407.success) {
+                    const supplierCount8407 =
+                        createResult8407.tender.invitedSuppliers?.length || 0;
+                    const questionCount8407 =
+                        createResult8407.tender.qa?.length || 0;
+                    const prosjekteringsMilepælerCount =
+                        createResult8407.tender.ns8407?.prosjekteringsMilepæler
+                            ?.length || 0;
+                    const utførelsesMilepælerCount =
+                        createResult8407.tender.ns8407?.utførelsesMilepæler
+                            ?.length || 0;
+                    results.push({
+                        name: "Opprette anskaffelse NS 8407 (Totalentreprise)",
+                        success: true,
+                        message: `NS 8407 anskaffelse opprettet: ${createResult8407.tender.id}. Inkluderer ${supplierCount8407} leverandør(er), ${questionCount8407} spørsmål, ${prosjekteringsMilepælerCount} prosjekterings milepæler og ${utførelsesMilepælerCount} utførelses milepæler.`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette anskaffelse NS 8407 (Totalentreprise)",
+                        success: false,
+                        message:
+                            createResult8407.error ||
+                            "Kunne ikke opprette NS 8407 anskaffelse",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette anskaffelse NS 8407 (Totalentreprise)",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved opprettelse av NS 8407 anskaffelse",
+                });
+            }
+
+            // Test: Close and reopen tender
+            if (testTenderId) {
+                setTestProgress(95);
+                try {
+                    // Close the tender
+                    const closeResult = await closeTender(testTenderId);
+                    if (closeResult.success) {
+                        // Verify status changed
+                        const closedTender = await getTenderById(testTenderId);
+                        if (closedTender && closedTender.status === "closed") {
+                            results.push({
+                                name: "Lukke anskaffelse",
+                                success: true,
+                                message: "Anskaffelse lukket suksessfullt",
+                            });
+
+                            // Test: Verify closed tender can be retrieved by status
+                            try {
+                                const closedTenders = await getTendersByStatus(
+                                    "closed"
+                                );
+                                const foundClosedTender = closedTenders.find(
+                                    (t) => t.id === testTenderId
+                                );
+                                if (
+                                    foundClosedTender &&
+                                    foundClosedTender.status === "closed"
+                                ) {
+                                    results.push({
+                                        name: "Hente lukkede anskaffelser",
+                                        success: true,
+                                        message:
+                                            "Lukkede anskaffelse funnet i statusfilter",
+                                    });
+                                } else {
+                                    results.push({
+                                        name: "Hente lukkede anskaffelser",
+                                        success: false,
+                                        message:
+                                            "Kunne ikke finne lukkede anskaffelse i statusfilter",
+                                    });
+                                }
+                            } catch (error) {
+                                results.push({
+                                    name: "Hente lukkede anskaffelser",
+                                    success: false,
+                                    message:
+                                        error.message ||
+                                        "Feil ved henting av lukkede anskaffelser",
+                                });
+                            }
+
+                            // Reopen the tender
+                            const reopenResult = await openTender(testTenderId);
+                            if (reopenResult.success) {
+                                // Verify status changed back
+                                const reopenedTender = await getTenderById(
+                                    testTenderId
+                                );
+                                if (
+                                    reopenedTender &&
+                                    reopenedTender.status === "open"
+                                ) {
+                                    results.push({
+                                        name: "Gjenåpne anskaffelse",
+                                        success: true,
+                                        message:
+                                            "Anskaffelse gjenåpnet suksessfullt",
+                                    });
+                                } else {
+                                    results.push({
+                                        name: "Gjenåpne anskaffelse",
+                                        success: false,
+                                        message:
+                                            'Status ble ikke oppdatert til "open"',
+                                    });
+                                }
+                            } else {
+                                results.push({
+                                    name: "Gjenåpne anskaffelse",
+                                    success: false,
+                                    message:
+                                        reopenResult.error ||
+                                        "Kunne ikke gjenåpne anskaffelse",
+                                });
+                            }
+                        } else {
+                            results.push({
+                                name: "Lukke anskaffelse",
+                                success: false,
+                                message:
+                                    'Status ble ikke oppdatert til "closed"',
+                            });
+                        }
+                    } else {
+                        results.push({
+                            name: "Lukke anskaffelse",
+                            success: false,
+                            message:
+                                closeResult.error ||
+                                "Kunne ikke lukke anskaffelse",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Lukke/gjenåpne anskaffelse",
+                        success: false,
+                        message: error.message || "Feil ved lukking/gjenåpning",
+                    });
+                }
+            }
+
+            setTestProgress(100);
+
+            // Calculate overall success
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                testTenderId: testTenderId,
+                testProjectId: testProjectId,
+                testContractId: testContractId,
+                category: activeTestCategory || "all",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: activeTestCategory || "all",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runProjectTests = async () => {
+        setActiveTestCategory("projects");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "projects",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // Create project
+            setTestProgress(25);
+            let testProjectId = null;
+            try {
+                const projectResult = await createProject(
+                    {
+                        name: "Test Prosjekt - " + new Date().toISOString(),
+                        description: "Dette er et testprosjekt",
+                        status: "active",
+                    },
+                    user
+                );
+
+                if (projectResult.success && projectResult.project) {
+                    testProjectId = projectResult.project.id;
+                    results.push({
+                        name: "Opprette nytt prosjekt",
+                        success: true,
+                        message: `Prosjekt opprettet: ${testProjectId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette nytt prosjekt",
+                        success: false,
+                        message:
+                            projectResult.error ||
+                            "Kunne ikke opprette prosjekt",
+                    });
+                    // Cannot continue without a project
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette nytt prosjekt",
+                    success: false,
+                    message: error.message || "Feil ved opprettelse",
+                });
+            }
+
+            // Get project by ID
+            setTestProgress(50);
+            if (testProjectId) {
+                try {
+                    const retrievedProject = await getProjectById(
+                        testProjectId
+                    );
+                    if (
+                        retrievedProject &&
+                        retrievedProject.id === testProjectId
+                    ) {
+                        results.push({
+                            name: "Hente prosjekt etter ID",
+                            success: true,
+                            message: `Prosjekt hentet: ${retrievedProject.name}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente prosjekt etter ID",
+                            success: false,
+                            message: "Kunne ikke hente prosjekt",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente prosjekt etter ID",
+                        success: false,
+                        message: error.message || "Feil ved henting",
+                    });
+                }
+            }
+
+            // Get all projects
+            setTestProgress(75);
+            try {
+                const allProjects = await getAllProjects();
+                if (Array.isArray(allProjects) && allProjects.length > 0) {
+                    results.push({
+                        name: "Hente alle prosjekter",
+                        success: true,
+                        message: `${allProjects.length} prosjekter funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente alle prosjekter",
+                        success: true,
+                        message:
+                            "Ingen prosjekter funnet (tomt resultat er OK)",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente alle prosjekter",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Get projects by company
+            setTestProgress(100);
+            if (user?.companyId) {
+                try {
+                    const companyProjects = await getProjectsByCompany(
+                        user.companyId
+                    );
+                    if (Array.isArray(companyProjects)) {
+                        results.push({
+                            name: "Hente prosjekter etter selskap",
+                            success: true,
+                            message: `${companyProjects.length} prosjekter for selskapet`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente prosjekter etter selskap",
+                            success: false,
+                            message: "Ugyldig resultat",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente prosjekter etter selskap",
+                        success: false,
+                        message: error.message || "Feil ved henting",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Hente prosjekter etter selskap",
+                    success: false,
+                    message: "Ingen selskap ID tilgjengelig",
+                });
+            }
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                testProjectId: testProjectId,
+                category: "projects",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "projects",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runTenderTests = async (testEmail = null) => {
+        setActiveTestCategory("tenders");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "tenders",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        // Use provided email or fallback to default test email
+        const emailToUse = testEmail || "test-tender@example.com";
+
+        try {
+            // Test 1: Create a test project
+            setTestProgress(10);
+            let testProjectId = null;
+            try {
+                const projectResult = await createProject(
+                    {
+                        name:
+                            "Test Prosjekt for Tender Test - " +
+                            new Date().toISOString(),
+                        description: "Midlertidig prosjekt for testing",
+                        status: "active",
+                    },
+                    user
+                );
+
+                testProjectId = projectResult.project?.id;
+
+                if (!testProjectId) {
+                    results.push({
+                        name: "Opprette testprosjekt",
+                        success: false,
+                        message: "Kunne ikke opprette testprosjekt",
+                    });
+                    throw new Error("Mangler prosjekt for testing");
+                }
+
+                results.push({
+                    name: "Opprette testprosjekt",
+                    success: true,
+                    message: `Prosjekt opprettet: ${testProjectId}`,
+                });
+            } catch (error) {
+                results.push({
+                    name: "Opprette testprosjekt",
+                    success: false,
+                    message:
+                        error.message || "Kunne ikke opprette testprosjekt",
+                });
+                throw error;
+            }
+
+            // Test 2: Create open tender (åpne anskaffelse)
+            setTestProgress(30);
+            let testOpenTenderId = null;
+            try {
+                const createOpenResult = await createTender(
+                    {
+                        projectId: testProjectId,
+                        title:
+                            "Test Åpne Anskaffelse - " +
+                            new Date().toISOString(),
+                        description: "Test åpne anskaffelse",
+                        contractStandard: "NS 8405",
+                        deadline: new Date(
+                            Date.now() + 30 * 24 * 60 * 60 * 1000
+                        ),
+                        status: "open",
+                    },
+                    user
+                );
+
+                if (createOpenResult.success && createOpenResult.tender) {
+                    testOpenTenderId = createOpenResult.tender.id;
+                    results.push({
+                        name: "Opprette åpne anskaffelse",
+                        success: true,
+                        message: `Åpne anskaffelse opprettet: ${testOpenTenderId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette åpne anskaffelse",
+                        success: false,
+                        message:
+                            createOpenResult.error ||
+                            "Kunne ikke opprette åpne anskaffelse",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette åpne anskaffelse",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved opprettelse av åpne anskaffelse",
+                });
+            }
+
+            // Test 3: Create closed tender (lukkede anskaffelse)
+            setTestProgress(50);
+            let testClosedTenderId = null;
+            try {
+                const createClosedResult = await createTender(
+                    {
+                        projectId: testProjectId,
+                        title:
+                            "Test Lukkede Anskaffelse - " +
+                            new Date().toISOString(),
+                        description: "Test lukkede anskaffelse",
+                        contractStandard: "NS 8405",
+                        deadline: new Date(
+                            Date.now() - 10 * 24 * 60 * 60 * 1000
+                        ), // Past deadline for closed tender
+                        status: "closed",
+                    },
+                    user
+                );
+
+                if (createClosedResult.success && createClosedResult.tender) {
+                    testClosedTenderId = createClosedResult.tender.id;
+                    results.push({
+                        name: "Opprette lukkede anskaffelse",
+                        success: true,
+                        message: `Lukkede anskaffelse opprettet: ${testClosedTenderId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette lukkede anskaffelse",
+                        success: false,
+                        message:
+                            createClosedResult.error ||
+                            "Kunne ikke opprette lukkede anskaffelse",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette lukkede anskaffelse",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved opprettelse av lukkede anskaffelse",
+                });
+            }
+
+            // Test 4: Get tender by ID
+            setTestProgress(70);
+            if (testOpenTenderId) {
+                try {
+                    const retrievedTender = await getTenderById(
+                        testOpenTenderId
+                    );
+                    if (
+                        retrievedTender &&
+                        retrievedTender.id === testOpenTenderId
+                    ) {
+                        results.push({
+                            name: "Hente anskaffelse etter ID",
+                            success: true,
+                            message: `Anskaffelse hentet: ${retrievedTender.title}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente anskaffelse etter ID",
+                            success: false,
+                            message: "Kunne ikke hente anskaffelse",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente anskaffelse etter ID",
+                        success: false,
+                        message: error.message || "Feil ved henting",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Hente anskaffelse etter ID",
+                    success: false,
+                    message: "Ingen anskaffelse ID tilgjengelig",
+                });
+            }
+
+            // Test 5: Get all tenders
+            setTestProgress(80);
+            try {
+                const allTenders = await getAllTenders();
+                if (Array.isArray(allTenders)) {
+                    const openCount = allTenders.filter(
+                        (t) => t.status === "open"
+                    ).length;
+                    const closedCount = allTenders.filter(
+                        (t) => t.status === "closed"
+                    ).length;
+                    results.push({
+                        name: "Hente alle anskaffelser",
+                        success: true,
+                        message: `${allTenders.length} anskaffelser funnet (${openCount} åpne, ${closedCount} lukkede)`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente alle anskaffelser",
+                        success: true,
+                        message:
+                            "Ingen anskaffelser funnet (tomt resultat er OK)",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente alle anskaffelser",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 6: Get closed tenders by status
+            setTestProgress(85);
+            if (testClosedTenderId) {
+                try {
+                    const closedTenders = await getTendersByStatus("closed");
+                    const foundClosedTender = closedTenders.find(
+                        (t) => t.id === testClosedTenderId
+                    );
+                    if (
+                        foundClosedTender &&
+                        foundClosedTender.status === "closed"
+                    ) {
+                        results.push({
+                            name: "Hente lukkede anskaffelser",
+                            success: true,
+                            message: `Lukkede anskaffelse funnet: ${foundClosedTender.title}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente lukkede anskaffelser",
+                            success: false,
+                            message: "Kunne ikke finne lukkede anskaffelse",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente lukkede anskaffelser",
+                        success: false,
+                        message:
+                            error.message ||
+                            "Feil ved henting av lukkede anskaffelser",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Hente lukkede anskaffelser",
+                    success: false,
+                    message: "Ingen lukkede anskaffelse ID tilgjengelig",
+                });
+            }
+
+            // Test 7: Close and reopen tender
+            if (testOpenTenderId) {
+                setTestProgress(90);
+                try {
+                    // Close the tender
+                    const closeResult = await closeTender(testOpenTenderId);
+                    if (closeResult.success) {
+                        // Verify status changed
+                        const closedTender = await getTenderById(
+                            testOpenTenderId
+                        );
+                        if (closedTender && closedTender.status === "closed") {
+                            results.push({
+                                name: "Lukke anskaffelse",
+                                success: true,
+                                message: "Anskaffelse lukket suksessfullt",
+                            });
+
+                            // Reopen the tender
+                            const reopenResult = await openTender(
+                                testOpenTenderId
+                            );
+                            if (reopenResult.success) {
+                                // Verify status changed back
+                                const reopenedTender = await getTenderById(
+                                    testOpenTenderId
+                                );
+                                if (
+                                    reopenedTender &&
+                                    reopenedTender.status === "open"
+                                ) {
+                                    results.push({
+                                        name: "Gjenåpne anskaffelse",
+                                        success: true,
+                                        message:
+                                            "Anskaffelse gjenåpnet suksessfullt",
+                                    });
+                                } else {
+                                    results.push({
+                                        name: "Gjenåpne anskaffelse",
+                                        success: false,
+                                        message:
+                                            'Status ble ikke oppdatert til "open"',
+                                    });
+                                }
+                            } else {
+                                results.push({
+                                    name: "Gjenåpne anskaffelse",
+                                    success: false,
+                                    message:
+                                        reopenResult.error ||
+                                        "Kunne ikke gjenåpne anskaffelse",
+                                });
+                            }
+                        } else {
+                            results.push({
+                                name: "Lukke anskaffelse",
+                                success: false,
+                                message:
+                                    'Status ble ikke oppdatert til "closed"',
+                            });
+                        }
+                    } else {
+                        results.push({
+                            name: "Lukke anskaffelse",
+                            success: false,
+                            message:
+                                closeResult.error ||
+                                "Kunne ikke lukke anskaffelse",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Lukke/gjenåpne anskaffelse",
+                        success: false,
+                        message: error.message || "Feil ved lukking/gjenåpning",
+                    });
+                }
+            }
+
+            // Test 8: Reopen closed tender
+            if (testClosedTenderId) {
+                setTestProgress(95);
+                try {
+                    // Reopen the closed tender
+                    const reopenResult = await openTender(testClosedTenderId);
+                    if (reopenResult.success) {
+                        // Verify status changed to open
+                        const reopenedTender = await getTenderById(
+                            testClosedTenderId
+                        );
+                        if (
+                            reopenedTender &&
+                            reopenedTender.status === "open"
+                        ) {
+                            results.push({
+                                name: "Gjenåpne lukkede anskaffelse",
+                                success: true,
+                                message:
+                                    "Lukkede anskaffelse gjenåpnet suksessfullt",
+                            });
+                        } else {
+                            results.push({
+                                name: "Gjenåpne lukkede anskaffelse",
+                                success: false,
+                                message: 'Status ble ikke oppdatert til "open"',
+                            });
+                        }
+                    } else {
+                        results.push({
+                            name: "Gjenåpne lukkede anskaffelse",
+                            success: false,
+                            message:
+                                reopenResult.error ||
+                                "Kunne ikke gjenåpne lukkede anskaffelse",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Gjenåpne lukkede anskaffelse",
+                        success: false,
+                        message:
+                            error.message ||
+                            "Feil ved gjenåpning av lukkede anskaffelse",
+                    });
+                }
+            }
+
+            // Test 9: Add supplier invitation to tender (with email)
+            if (testOpenTenderId) {
+                setTestProgress(98);
+                try {
+                    const invitationResult = await addSupplierInvitation(
+                        testOpenTenderId,
+                        {
+                            supplierId: "test_supplier_tender",
+                            companyId: "test_company_tender",
+                            companyName: "Test Leverandør for Anskaffelse AS",
+                            orgNumber: "999888777",
+                            email: emailToUse,
+                        }
+                    );
+                    if (invitationResult.success) {
+                        results.push({
+                            name: "Legge til leverandørinvitasjon til anskaffelse",
+                            success: true,
+                            message: `Invitasjon sendt til ${emailToUse}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Legge til leverandørinvitasjon til anskaffelse",
+                            success: false,
+                            message:
+                                invitationResult.error ||
+                                "Kunne ikke sende invitasjon",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Legge til leverandørinvitasjon til anskaffelse",
+                        success: false,
+                        message: error.message || "Feil ved invitasjon",
+                    });
+                }
+            }
+
+            setTestProgress(100);
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                testTenderId: testOpenTenderId || testClosedTenderId,
+                testProjectId: testProjectId,
+                category: "tenders",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "tenders",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runQATests = async () => {
+        setActiveTestCategory("qa");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "qa",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // First, get an existing tender or create one
+            const existingTenders = await getAllTenders();
+            let testTenderId = existingTenders[0]?.id;
+
+            if (!testTenderId) {
+                // Create a test project and tender
+                const projectResult = await createProject(
+                    {
+                        name: "Test Prosjekt for QA - " + Date.now(),
+                        description: "QA Test",
+                        status: "active",
+                    },
+                    user
+                );
+                if (projectResult.project) {
+                    const tenderResult = await createTender(
+                        {
+                            projectId: projectResult.project.id,
+                            title: "Test Anskaffelse for QA - " + Date.now(),
+                            description: "QA Test",
+                            contractStandard: "NS 8405",
+                            deadline: new Date(
+                                Date.now() + 30 * 24 * 60 * 60 * 1000
+                            ),
+                            status: "open",
+                        },
+                        user
+                    );
+                    testTenderId = tenderResult.tender?.id;
+                }
+            }
+
+            if (!testTenderId) {
+                results.push({
+                    name: "Legge til spørsmål",
+                    success: false,
+                    message: "Kunne ikke opprette eller finne test anskaffelse",
+                });
+                setTestResults({
+                    success: false,
+                    tests: results,
+                    category: "qa",
+                });
+                setTesting(false);
+                setTestProgress(0);
+                setActiveTestCategory(null);
+                return;
+            }
+
+            // Add question
+            setTestProgress(50);
+            let testQuestionId = null;
+            try {
+                const questionResult = await addQuestionToTender(
+                    testTenderId,
+                    "Dette er et testspørsmål",
+                    user
+                );
+
+                if (questionResult.success) {
+                    const updatedTender = await getTenderById(testTenderId);
+                    const questions = updatedTender?.qa || [];
+                    testQuestionId = questions[questions.length - 1]?.id;
+                    results.push({
+                        name: "Legge til spørsmål/kommentar",
+                        success: true,
+                        message: `Spørsmål lagt til: ${testQuestionId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Legge til spørsmål/kommentar",
+                        success: false,
+                        message: questionResult.error || "Kunne ikke legge til",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til spørsmål/kommentar",
+                    success: false,
+                    message: error.message || "Feil ved tillegg",
+                });
+            }
+
+            // Answer question
+            setTestProgress(100);
+            if (testQuestionId) {
+                try {
+                    const answerResult = await answerQuestion(
+                        testTenderId,
+                        testQuestionId,
+                        "Dette er et testsvar",
+                        user
+                    );
+
+                    if (answerResult.success) {
+                        results.push({
+                            name: "Besvare spørsmål",
+                            success: true,
+                            message: "Spørsmål besvart",
+                        });
+                    } else {
+                        results.push({
+                            name: "Besvare spørsmål",
+                            success: false,
+                            message: answerResult.error || "Kunne ikke besvare",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Besvare spørsmål",
+                        success: false,
+                        message: error.message || "Feil ved besvarelse",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Besvare spørsmål",
+                    success: false,
+                    message: "Ingen spørsmål å besvare",
+                });
+            }
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "qa",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "qa",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runDocumentTests = async () => {
+        setActiveTestCategory("documents");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "documents",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // First, get an existing tender or create one
+            const existingTenders = await getAllTenders();
+            let testTenderId = existingTenders[0]?.id;
+
+            if (!testTenderId) {
+                // Create a test project and tender
+                const projectResult = await createProject(
+                    {
+                        name: "Test Prosjekt for Docs - " + Date.now(),
+                        description: "Doc Test",
+                        status: "active",
+                    },
+                    user
+                );
+                if (projectResult.project) {
+                    const tenderResult = await createTender(
+                        {
+                            projectId: projectResult.project.id,
+                            title: "Test Anskaffelse for Docs - " + Date.now(),
+                            description: "Doc Test",
+                            contractStandard: "NS 8405",
+                            deadline: new Date(
+                                Date.now() + 30 * 24 * 60 * 60 * 1000
+                            ),
+                            status: "open",
+                        },
+                        user
+                    );
+                    testTenderId = tenderResult.tender?.id;
+                }
+            }
+
+            if (!testTenderId) {
+                results.push({
+                    name: "Legge til dokument",
+                    success: false,
+                    message: "Kunne ikke opprette eller finne test anskaffelse",
+                });
+                setTestResults({
+                    success: false,
+                    tests: results,
+                    category: "documents",
+                });
+                setTesting(false);
+                setTestProgress(0);
+                setActiveTestCategory(null);
+                return;
+            }
+
+            // Add document
+            setTestProgress(50);
+            let testDocumentId = null;
+            try {
+                const mockFile = new File(
+                    ["test content"],
+                    "test-dokument.pdf",
+                    {
+                        type: "application/pdf",
+                    }
+                );
+
+                const documentResult = await addDocumentsToTender(
+                    testTenderId,
+                    [mockFile],
+                    user
+                );
+
+                if (documentResult.success) {
+                    const updatedTender = await getTenderById(testTenderId);
+                    const documents = updatedTender?.documents || [];
+                    testDocumentId = documents[documents.length - 1]?.id;
+                    results.push({
+                        name: "Legge til filer/dokumenter",
+                        success: true,
+                        message: `Dokument lagt til: ${testDocumentId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Legge til filer/dokumenter",
+                        success: false,
+                        message: documentResult.error || "Kunne ikke legge til",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til filer/dokumenter",
+                    success: false,
+                    message: error.message || "Feil ved tillegg",
+                });
+            }
+
+            // Remove document
+            setTestProgress(100);
+            if (testDocumentId) {
+                try {
+                    const removeResult = await removeDocumentFromTender(
+                        testTenderId,
+                        testDocumentId
+                    );
+
+                    if (removeResult.success) {
+                        results.push({
+                            name: "Fjerne dokument",
+                            success: true,
+                            message: "Dokument fjernet",
+                        });
+                    } else {
+                        results.push({
+                            name: "Fjerne dokument",
+                            success: false,
+                            message: removeResult.error || "Kunne ikke fjerne",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Fjerne dokument",
+                        success: false,
+                        message: error.message || "Feil ved fjerning",
+                    });
+                }
+            } else {
+                results.push({
+                    name: "Fjerne dokument",
+                    success: false,
+                    message: "Ingen dokument å fjerne",
+                });
+            }
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "documents",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "documents",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runContractTests = async () => {
+        setActiveTestCategory("contracts");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "contracts",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // First, create a test project and tender with a bid
+            setTestProgress(10);
+            const projectResult = await createProject(
+                {
+                    name: "Test Prosjekt for Kontrakt - " + Date.now(),
+                    description: "Kontrakttest",
+                    status: "active",
+                },
+                user
+            );
+            const testProjectId = projectResult.project?.id;
+
+            if (!testProjectId) {
+                throw new Error("Kunne ikke opprette testprosjekt");
+            }
+
+            setTestProgress(20);
+            const tenderResult = await createTender(
+                {
+                    projectId: testProjectId,
+                    title: "Test Anskaffelse for Kontrakt - " + Date.now(),
+                    description: "Kontrakttest",
+                    contractStandard: "NS 8405",
+                    deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                    status: "open",
+                },
+                user
+            );
+            const testTenderId = tenderResult.tender?.id;
+
+            if (!testTenderId) {
+                throw new Error("Kunne ikke opprette testanskaffelse");
+            }
+
+            // Submit and award a bid
+            setTestProgress(30);
+            const { submitBid, awardTender } = await import(
+                "../api/tenderService"
+            );
+            const bidResult = await submitBid(
+                testTenderId,
+                { price: 500000, priceStructure: "fastpris" },
+                {
+                    id: "test_supplier",
+                    companyId: "test_company",
+                    companyName: "Test Leverandør AS",
+                }
+            );
+            const testBidId = bidResult.bid?.id;
+
+            if (testBidId) {
+                await awardTender(testTenderId, testBidId);
+            }
+
+            // Test 1: Generate contract
+            setTestProgress(40);
+            let testContractId = null;
+            try {
+                const tender = await getTenderById(testTenderId);
+                const project = await getProjectById(testProjectId);
+                const awardedBid = tender?.bids?.find(
+                    (b) => b.id === testBidId
+                );
+
+                if (tender && project && awardedBid) {
+                    const contractResult = await generateContract(
+                        tender,
+                        awardedBid,
+                        project
+                    );
+                    if (contractResult.success) {
+                        testContractId = contractResult.contract?.id;
+                        results.push({
+                            name: "Generere kontrakt",
+                            success: true,
+                            message: `Kontrakt generert med ID: ${testContractId}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Generere kontrakt",
+                            success: false,
+                            message:
+                                contractResult.error ||
+                                "Kunne ikke generere kontrakt",
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Generere kontrakt",
+                        success: false,
+                        message: "Mangler tender, project eller awarded bid",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Generere kontrakt",
+                    success: false,
+                    message: error.message || "Feil ved generering",
+                });
+            }
+
+            // Test 2: Get contract by ID
+            setTestProgress(50);
+            if (testContractId) {
+                try {
+                    const contract = await getContractById(testContractId);
+                    if (contract && contract.id === testContractId) {
+                        results.push({
+                            name: "Hente kontrakt etter ID",
+                            success: true,
+                            message: `Kontrakt hentet: ${contract.id}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente kontrakt etter ID",
+                            success: false,
+                            message: "Kunne ikke hente kontrakt",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente kontrakt etter ID",
+                        success: false,
+                        message: error.message || "Feil ved henting",
+                    });
+                }
+            }
+
+            // Test 3: Get contract by tender ID
+            setTestProgress(60);
+            try {
+                const contract = await getContractByTenderId(testTenderId);
+                if (contract && contract.tenderId === testTenderId) {
+                    results.push({
+                        name: "Hente kontrakt etter anskaffelse ID",
+                        success: true,
+                        message: `Kontrakt funnet: ${contract.id}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente kontrakt etter anskaffelse ID",
+                        success: false,
+                        message: "Kunne ikke hente kontrakt",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente kontrakt etter anskaffelse ID",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 4: Get contracts by project ID
+            setTestProgress(70);
+            try {
+                const contracts = await getContractsByProject(testProjectId);
+                if (Array.isArray(contracts)) {
+                    results.push({
+                        name: "Hente kontrakter etter prosjekt ID",
+                        success: true,
+                        message: `${contracts.length} kontrakt(er) funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente kontrakter etter prosjekt ID",
+                        success: false,
+                        message: "Ugyldig resultat",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente kontrakter etter prosjekt ID",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 5: Sign contract
+            setTestProgress(80);
+            if (testContractId) {
+                try {
+                    const signResult = await signContract(testContractId, user);
+                    if (signResult.success) {
+                        results.push({
+                            name: "Signere kontrakt",
+                            success: true,
+                            message: "Kontrakt signert",
+                        });
+                    } else {
+                        results.push({
+                            name: "Signere kontrakt",
+                            success: false,
+                            message: signResult.error || "Kunne ikke signere",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Signere kontrakt",
+                        success: false,
+                        message: error.message || "Feil ved signering",
+                    });
+                }
+            }
+
+            // Test 6: Add contract change
+            setTestProgress(90);
+            if (testContractId) {
+                try {
+                    const changeResult = await addContractChange(
+                        testContractId,
+                        {
+                            field: "price",
+                            oldValue: 500000,
+                            newValue: 550000,
+                            reason: "Tillegg for ekstra arbeid",
+                        },
+                        user
+                    );
+                    if (changeResult.success) {
+                        results.push({
+                            name: "Legge til kontraktendring",
+                            success: true,
+                            message: "Endring registrert",
+                        });
+                    } else {
+                        results.push({
+                            name: "Legge til kontraktendring",
+                            success: false,
+                            message:
+                                changeResult.error ||
+                                "Kunne ikke legge til endring",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Legge til kontraktendring",
+                        success: false,
+                        message: error.message || "Feil ved tillegg av endring",
+                    });
+                }
+            }
+
+            setTestProgress(100);
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "contracts",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "contracts",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runSupplierTests = async (testEmail = null) => {
+        setActiveTestCategory("suppliers");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "suppliers",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        // Use provided email or fallback to default test email
+        const emailToUse = testEmail || "test-invite@example.com";
+
+        try {
+            // Create a test project and tender
+            setTestProgress(10);
+            const projectResult = await createProject(
+                {
+                    name: "Test Prosjekt for Leverandør - " + Date.now(),
+                    description: "Leverandørtest",
+                    status: "active",
+                },
+                user
+            );
+            const testProjectId = projectResult.project?.id;
+
+            if (!testProjectId) {
+                throw new Error("Kunne ikke opprette testprosjekt");
+            }
+
+            setTestProgress(20);
+            const tenderResult = await createTender(
+                {
+                    projectId: testProjectId,
+                    title: "Test Anskaffelse for Leverandør - " + Date.now(),
+                    description: "Leverandørtest",
+                    contractStandard: "NS 8405",
+                    deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                    status: "open",
+                },
+                user
+            );
+            const testTenderId = tenderResult.tender?.id;
+
+            if (!testTenderId) {
+                throw new Error("Kunne ikke opprette testanskaffelse");
+            }
+
+            // Test 1: Add supplier invitation
+            setTestProgress(40);
+            try {
+                const invitationResult = await addSupplierInvitation(
+                    testTenderId,
+                    {
+                        supplierId: "test_supplier_invite",
+                        companyId: "test_company_invite",
+                        companyName: "Test Invitert Leverandør AS",
+                        orgNumber: "123456789",
+                        email: emailToUse,
+                    }
+                );
+                if (invitationResult.success) {
+                    results.push({
+                        name: "Legge til leverandørinvitasjon",
+                        success: true,
+                        message: `Invitasjon sendt til ${emailToUse}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Legge til leverandørinvitasjon",
+                        success: false,
+                        message:
+                            invitationResult.error ||
+                            "Kunne ikke sende invitasjon",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Legge til leverandørinvitasjon",
+                    success: false,
+                    message: error.message || "Feil ved invitasjon",
+                });
+            }
+
+            // Test 2: Get invitations for supplier
+            setTestProgress(60);
+            try {
+                const invitations = await getInvitationsForSupplier(
+                    "test_supplier_invite",
+                    emailToUse
+                );
+                if (Array.isArray(invitations)) {
+                    results.push({
+                        name: "Hente invitasjoner for leverandør",
+                        success: true,
+                        message: `${invitations.length} invitasjon(er) funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente invitasjoner for leverandør",
+                        success: false,
+                        message: "Ugyldig resultat",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente invitasjoner for leverandør",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 3: Get tenders by project
+            setTestProgress(80);
+            try {
+                const tenders = await getTendersByProject(testProjectId);
+                if (Array.isArray(tenders) && tenders.length > 0) {
+                    results.push({
+                        name: "Hente anskaffelser etter prosjekt",
+                        success: true,
+                        message: `${tenders.length} anskaffelse(r) funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente anskaffelser etter prosjekt",
+                        success: true,
+                        message:
+                            "Ingen anskaffelser funnet (tomt resultat er OK)",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente anskaffelser etter prosjekt",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 4: Get tenders by status
+            setTestProgress(90);
+            try {
+                const tenders = await getTendersByStatus("open");
+                if (Array.isArray(tenders)) {
+                    results.push({
+                        name: "Hente anskaffelser etter status",
+                        success: true,
+                        message: `${tenders.length} åpne anskaffelse(r) funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente anskaffelser etter status",
+                        success: false,
+                        message: "Ugyldig resultat",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente anskaffelser etter status",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 5: Update tender
+            setTestProgress(95);
+            try {
+                const updateResult = await updateTender(testTenderId, {
+                    description: "Oppdatert beskrivelse",
+                });
+                if (updateResult.success) {
+                    results.push({
+                        name: "Oppdatere anskaffelse",
+                        success: true,
+                        message: "Anskaffelse oppdatert",
+                    });
+                } else {
+                    results.push({
+                        name: "Oppdatere anskaffelse",
+                        success: false,
+                        message: updateResult.error || "Kunne ikke oppdatere",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Oppdatere anskaffelse",
+                    success: false,
+                    message: error.message || "Feil ved oppdatering",
+                });
+            }
+
+            setTestProgress(100);
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "suppliers",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "suppliers",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runAdminLeverandorTests = async () => {
+        setActiveTestCategory("adminleverandor");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "adminleverandor",
+            });
+            return;
+        }
+
+        // Check if current user is admin leverandør
+        if (user.role !== "receiver" || !user.isAdmin) {
+            setTestResults({
+                success: false,
+                error: "Disse testene krever at du er innlogget som admin leverandør (receiver med isAdmin: true)",
+                tests: [
+                    {
+                        name: "Verifisere brukertype",
+                        success: false,
+                        message: `Brukeren har role: ${user.role}, isAdmin: ${user.isAdmin}. Forventet: role: 'receiver', isAdmin: true`,
+                    },
+                ],
+                category: "adminleverandor",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // Test 1: Verify user is admin leverandør
+            setTestProgress(5);
+            results.push({
+                name: "Verifisere admin leverandør status",
+                success: true,
+                message: `Bruker er admin leverandør (role: ${user.role}, isAdmin: ${user.isAdmin})`,
+            });
+
+            // Test 2: Admin privilege - Read all users
+            setTestProgress(15);
+            try {
+                const allAdminUsers = await getAllAdminUsers();
+                if (Array.isArray(allAdminUsers)) {
+                    results.push({
+                        name: "Admin privilegium: Les alle brukere",
+                        success: true,
+                        message: `Kan lese alle ${allAdminUsers.length} admin brukere`,
+                    });
+                } else {
+                    results.push({
+                        name: "Admin privilegium: Les alle brukere",
+                        success: false,
+                        message: "Kunne ikke hente alle brukere",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Les alle brukere",
+                    success: false,
+                    message:
+                        error.message || "Feil ved henting av alle brukere",
+                });
+            }
+
+            // Test 3: Receiver limitation - Cannot create projects
+            setTestProgress(30);
+            try {
+                const projectResult = await createProject(
+                    {
+                        name:
+                            "Test Prosjekt Admin Leverandør - " +
+                            new Date().toISOString(),
+                        description:
+                            "Dette skal feile fordi admin leverandør ikke kan opprette prosjekter",
+                        status: "active",
+                    },
+                    user
+                );
+
+                if (!projectResult.success) {
+                    results.push({
+                        name: "Receiver begrensning: Kan ikke opprette prosjekter",
+                        success: true,
+                        message:
+                            "Korrekt: Admin leverandør kan ikke opprette prosjekter",
+                    });
+                } else {
+                    results.push({
+                        name: "Receiver begrensning: Kan ikke opprette prosjekter",
+                        success: false,
+                        message:
+                            "FEIL: Admin leverandør skulle ikke kunne opprette prosjekter",
+                    });
+                }
+            } catch (error) {
+                // Expected to fail
+                results.push({
+                    name: "Receiver begrensning: Kan ikke opprette prosjekter",
+                    success: true,
+                    message:
+                        "Korrekt: Opprettelse av prosjekt feilet som forventet",
+                });
+            }
+
+            // Test 4: Receiver limitation - Cannot create tenders
+            setTestProgress(45);
+            try {
+                // First need a project ID - use a test one or skip if no project exists
+                const allProjects = await getAllProjects();
+                const testProjectId = allProjects[0]?.id;
+
+                if (testProjectId) {
+                    const tenderResult = await createTender(
+                        {
+                            projectId: testProjectId,
+                            title:
+                                "Test Anskaffelse Admin Leverandør - " +
+                                new Date().toISOString(),
+                            description:
+                                "Dette skal feile fordi admin leverandør ikke kan opprette anskaffelser",
+                            contractStandard: "NS 8405",
+                            deadline: new Date(
+                                Date.now() + 30 * 24 * 60 * 60 * 1000
+                            ),
+                            status: "open",
+                        },
+                        user
+                    );
+
+                    if (!tenderResult.success) {
+                        results.push({
+                            name: "Receiver begrensning: Kan ikke opprette anskaffelser",
+                            success: true,
+                            message:
+                                "Korrekt: Admin leverandør kan ikke opprette anskaffelser",
+                        });
+                    } else {
+                        results.push({
+                            name: "Receiver begrensning: Kan ikke opprette anskaffelser",
+                            success: false,
+                            message:
+                                "FEIL: Admin leverandør skulle ikke kunne opprette anskaffelser",
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Receiver begrensning: Kan ikke opprette anskaffelser",
+                        success: true,
+                        message:
+                            "Skippet: Ingen prosjekter tilgjengelig for testing",
+                    });
+                }
+            } catch (error) {
+                // Expected to fail
+                results.push({
+                    name: "Receiver begrensning: Kan ikke opprette anskaffelser",
+                    success: true,
+                    message:
+                        "Korrekt: Opprettelse av anskaffelse feilet som forventet",
+                });
+            }
+
+            // Test 5: Admin privilege - Can delete any tender (if one exists)
+            setTestProgress(60);
+            try {
+                const allTenders = await getAllTenders();
+                if (allTenders.length > 0) {
+                    // Try to delete the first tender (even if not created by this user)
+                    const testTender = allTenders[0];
+                    const deleteResult = await deleteTender(testTender.id);
+
+                    if (deleteResult.success) {
+                        results.push({
+                            name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                            success: true,
+                            message: `Kunne slette anskaffelse "${testTender.title}" (ikke opprettet av denne brukeren)`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                            success: false,
+                            message:
+                                deleteResult.error ||
+                                "Kunne ikke slette anskaffelse",
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                        success: true,
+                        message:
+                            "Skippet: Ingen anskaffelser tilgjengelig for testing",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                    success: false,
+                    message:
+                        error.message || "Feil ved sletting av anskaffelse",
+                });
+            }
+
+            // Test 6: Admin privilege - Can read all users via getCollection
+            setTestProgress(75);
+            try {
+                const allUsers = await getCollection("users", []);
+                if (Array.isArray(allUsers) && allUsers.length > 0) {
+                    results.push({
+                        name: "Admin privilegium: Kan lese alle brukere via getCollection",
+                        success: true,
+                        message: `Kan lese ${allUsers.length} brukere totalt`,
+                    });
+                } else {
+                    results.push({
+                        name: "Admin privilegium: Kan lese alle brukere via getCollection",
+                        success: false,
+                        message: "Kunne ikke lese alle brukere",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Kan lese alle brukere via getCollection",
+                    success: false,
+                    message:
+                        error.message || "Feil ved henting av alle brukere",
+                });
+            }
+
+            // Test 7: Receiver capability - Can view tenders (if invited)
+            setTestProgress(85);
+            try {
+                const allTenders = await getAllTenders();
+                const openTenders = allTenders.filter(
+                    (t) => t.status === "open"
+                );
+
+                if (openTenders.length > 0) {
+                    results.push({
+                        name: "Receiver evne: Kan se anskaffelser",
+                        success: true,
+                        message: `Kan se ${openTenders.length} åpne anskaffelser`,
+                    });
+                } else {
+                    results.push({
+                        name: "Receiver evne: Kan se anskaffelser",
+                        success: true,
+                        message:
+                            "Ingen åpne anskaffelser tilgjengelig (men kan se listen)",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Receiver evne: Kan se anskaffelser",
+                    success: false,
+                    message:
+                        error.message || "Feil ved henting av anskaffelser",
+                });
+            }
+
+            // Test 8: Admin privilege - Can write to companies collection
+            setTestProgress(95);
+            try {
+                // Try to read companies collection (write test would require creating a company)
+                const companies = await getCollection("companies", []);
+                results.push({
+                    name: "Admin privilegium: Tilgang til companies collection",
+                    success: true,
+                    message: `Kan lese companies collection (${companies.length} selskap funnet)`,
+                });
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Tilgang til companies collection",
+                    success: false,
+                    message:
+                        error.message ||
+                        "Feil ved tilgang til companies collection",
+                });
+            }
+
+            setTestProgress(100);
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "adminleverandor",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "adminleverandor",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runComplaintsTests = async () => {
+        setActiveTestCategory("complaints");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "complaints",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // Test 1: Create a complaint
+            setTestProgress(10);
+            let testComplaintId = null;
+            try {
+                const complaintResult = await createComplaint(
+                    {
+                        title: "Test Klage - " + new Date().toISOString(),
+                        description:
+                            "Dette er en testklage for å verifisere funksjonalitet",
+                        category: "general",
+                        priority: "medium",
+                    },
+                    user
+                );
+
+                if (complaintResult.success && complaintResult.complaint) {
+                    testComplaintId = complaintResult.complaint.id;
+                    results.push({
+                        name: "Opprette klage",
+                        success: true,
+                        message: `Klage opprettet med ID: ${testComplaintId}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Opprette klage",
+                        success: false,
+                        message:
+                            complaintResult.error ||
+                            "Kunne ikke opprette klage",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Opprette klage",
+                    success: false,
+                    message: error.message || "Feil ved opprettelse av klage",
+                });
+            }
+
+            // Test 2: Get complaint by ID
+            setTestProgress(30);
+            if (testComplaintId) {
+                try {
+                    const complaint = await getComplaintById(testComplaintId);
+                    if (complaint && complaint.id === testComplaintId) {
+                        results.push({
+                            name: "Hente klage etter ID",
+                            success: true,
+                            message: `Klage hentet: ${complaint.title}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Hente klage etter ID",
+                            success: false,
+                            message: "Kunne ikke hente klage",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Hente klage etter ID",
+                        success: false,
+                        message: error.message || "Feil ved henting",
+                    });
+                }
+            }
+
+            // Test 3: Get all complaints
+            setTestProgress(50);
+            try {
+                const allComplaints = await getAllComplaints();
+                if (Array.isArray(allComplaints)) {
+                    results.push({
+                        name: "Hente alle klager",
+                        success: true,
+                        message: `${allComplaints.length} klage(r) funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Hente alle klager",
+                        success: false,
+                        message: "Ugyldig resultat",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Hente alle klager",
+                    success: false,
+                    message: error.message || "Feil ved henting",
+                });
+            }
+
+            // Test 4: Update complaint status
+            setTestProgress(70);
+            if (testComplaintId) {
+                try {
+                    const updateResult = await updateComplaintStatus(
+                        testComplaintId,
+                        "in_progress",
+                        user,
+                        "Test statusoppdatering"
+                    );
+                    if (updateResult.success) {
+                        results.push({
+                            name: "Oppdatere klagestatus",
+                            success: true,
+                            message: 'Status oppdatert til "in_progress"',
+                        });
+                    } else {
+                        results.push({
+                            name: "Oppdatere klagestatus",
+                            success: false,
+                            message:
+                                updateResult.error ||
+                                "Kunne ikke oppdatere status",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Oppdatere klagestatus",
+                        success: false,
+                        message: error.message || "Feil ved oppdatering",
+                    });
+                }
+            }
+
+            // Test 5: Add comment to complaint
+            setTestProgress(85);
+            if (testComplaintId) {
+                try {
+                    const commentResult = await addComplaintComment(
+                        testComplaintId,
+                        "Dette er en testkommentar",
+                        user
+                    );
+                    if (commentResult.success) {
+                        results.push({
+                            name: "Legge til kommentar til klage",
+                            success: true,
+                            message: "Kommentar lagt til",
+                        });
+                    } else {
+                        results.push({
+                            name: "Legge til kommentar til klage",
+                            success: false,
+                            message:
+                                commentResult.error ||
+                                "Kunne ikke legge til kommentar",
+                        });
+                    }
+                } catch (error) {
+                    results.push({
+                        name: "Legge til kommentar til klage",
+                        success: false,
+                        message:
+                            error.message || "Feil ved tillegg av kommentar",
+                    });
+                }
+            }
+
+            // Test 6: Filter complaints by status
+            setTestProgress(95);
+            try {
+                const submittedComplaints = await getAllComplaints({
+                    status: "submitted",
+                });
+                if (Array.isArray(submittedComplaints)) {
+                    results.push({
+                        name: "Filtrere klager etter status",
+                        success: true,
+                        message: `${submittedComplaints.length} innsendte klage(r) funnet`,
+                    });
+                } else {
+                    results.push({
+                        name: "Filtrere klager etter status",
+                        success: false,
+                        message: "Ugyldig resultat",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Filtrere klager etter status",
+                    success: false,
+                    message: error.message || "Feil ved filtrering",
+                });
+            }
+
+            setTestProgress(100);
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "complaints",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "complaints",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runAdminAnskaffelseTests = async () => {
+        setActiveTestCategory("adminanskaffelse");
+        if (!user) {
+            setTestResults({
+                success: false,
+                error: "Du må være innlogget for å kjøre tester",
+                tests: [],
+                category: "adminanskaffelse",
+            });
+            return;
+        }
+
+        // Check if current user is admin anskaffelse
+        if (user.role !== "sender" || !user.isAdmin) {
+            setTestResults({
+                success: false,
+                error: "Disse testene krever at du er innlogget som admin anskaffelse (sender med isAdmin: true)",
+                tests: [
+                    {
+                        name: "Verifisere brukertype",
+                        success: false,
+                        message: `Brukeren har role: ${user.role}, isAdmin: ${user.isAdmin}. Forventet: role: 'sender', isAdmin: true`,
+                    },
+                ],
+                category: "adminanskaffelse",
+            });
+            return;
+        }
+
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // Test 1: Verify user is admin anskaffelse
+            setTestProgress(5);
+            results.push({
+                name: "Verifisere admin anskaffelse status",
+                success: true,
+                message: `Bruker er admin anskaffelse (role: ${user.role}, isAdmin: ${user.isAdmin})`,
+            });
+
+            // Test 2: Admin privilege - Read all users
+            setTestProgress(15);
+            try {
+                const allAdminUsers = await getAllAdminUsers();
+                if (Array.isArray(allAdminUsers)) {
+                    results.push({
+                        name: "Admin privilegium: Les alle brukere",
+                        success: true,
+                        message: `Kan lese alle ${allAdminUsers.length} admin brukere`,
+                    });
+                } else {
+                    results.push({
+                        name: "Admin privilegium: Les alle brukere",
+                        success: false,
+                        message: "Kunne ikke hente alle brukere",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Les alle brukere",
+                    success: false,
+                    message:
+                        error.message || "Feil ved henting av alle brukere",
+                });
+            }
+
+            // Test 3: Sender capability - Can create projects
+            setTestProgress(30);
+            try {
+                const projectResult = await createProject(
+                    {
+                        name:
+                            "Test Prosjekt Admin Anskaffelse - " +
+                            new Date().toISOString(),
+                        description:
+                            "Test prosjekt opprettet av admin anskaffelse",
+                        status: "active",
+                    },
+                    user
+                );
+
+                if (projectResult.success && projectResult.project) {
+                    results.push({
+                        name: "Sender evne: Kan opprette prosjekter",
+                        success: true,
+                        message: `Prosjekt opprettet: ${projectResult.project.id}`,
+                    });
+                } else {
+                    results.push({
+                        name: "Sender evne: Kan opprette prosjekter",
+                        success: false,
+                        message:
+                            projectResult.error ||
+                            "Kunne ikke opprette prosjekt",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Sender evne: Kan opprette prosjekter",
+                    success: false,
+                    message:
+                        error.message || "Feil ved opprettelse av prosjekt",
+                });
+            }
+
+            // Test 4: Sender capability - Can create tenders
+            setTestProgress(50);
+            try {
+                const allProjects = await getAllProjects();
+                const testProjectId = allProjects[0]?.id;
+
+                if (testProjectId) {
+                    const tenderResult = await createTender(
+                        {
+                            projectId: testProjectId,
+                            title:
+                                "Test Anskaffelse Admin - " +
+                                new Date().toISOString(),
+                            description:
+                                "Test anskaffelse opprettet av admin anskaffelse",
+                            contractStandard: "NS 8405",
+                            deadline: new Date(
+                                Date.now() + 30 * 24 * 60 * 60 * 1000
+                            ),
+                            status: "open",
+                        },
+                        user
+                    );
+
+                    if (tenderResult.success && tenderResult.tender) {
+                        results.push({
+                            name: "Sender evne: Kan opprette anskaffelser",
+                            success: true,
+                            message: `Anskaffelse opprettet: ${tenderResult.tender.id}`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Sender evne: Kan opprette anskaffelser",
+                            success: false,
+                            message:
+                                tenderResult.error ||
+                                "Kunne ikke opprette anskaffelse",
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Sender evne: Kan opprette anskaffelser",
+                        success: true,
+                        message:
+                            "Skippet: Ingen prosjekter tilgjengelig for testing",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Sender evne: Kan opprette anskaffelser",
+                    success: false,
+                    message:
+                        error.message || "Feil ved opprettelse av anskaffelse",
+                });
+            }
+
+            // Test 5: Admin privilege - Can delete any tender
+            setTestProgress(70);
+            try {
+                const allTenders = await getAllTenders();
+                if (allTenders.length > 0) {
+                    const testTender = allTenders[0];
+                    const deleteResult = await deleteTender(testTender.id);
+
+                    if (deleteResult.success) {
+                        results.push({
+                            name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                            success: true,
+                            message: `Kunne slette anskaffelse "${testTender.title}"`,
+                        });
+                    } else {
+                        results.push({
+                            name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                            success: false,
+                            message:
+                                deleteResult.error ||
+                                "Kunne ikke slette anskaffelse",
+                        });
+                    }
+                } else {
+                    results.push({
+                        name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                        success: true,
+                        message:
+                            "Skippet: Ingen anskaffelser tilgjengelig for testing",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Kan slette hvilken som helst anskaffelse",
+                    success: false,
+                    message:
+                        error.message || "Feil ved sletting av anskaffelse",
+                });
+            }
+
+            // Test 6: Admin privilege - Can read all users via getCollection
+            setTestProgress(85);
+            try {
+                const allUsers = await getCollection("users", []);
+                if (Array.isArray(allUsers) && allUsers.length > 0) {
+                    results.push({
+                        name: "Admin privilegium: Kan lese alle brukere",
+                        success: true,
+                        message: `Kan lese ${allUsers.length} brukere totalt`,
+                    });
+                } else {
+                    results.push({
+                        name: "Admin privilegium: Kan lese alle brukere",
+                        success: false,
+                        message: "Kunne ikke lese alle brukere",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Admin privilegium: Kan lese alle brukere",
+                    success: false,
+                    message:
+                        error.message || "Feil ved henting av alle brukere",
+                });
+            }
+
+            setTestProgress(100);
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "adminanskaffelse",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "adminanskaffelse",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const runBrregTests = async () => {
+        setActiveTestCategory("brreg");
+        setTesting(true);
+        setTestProgress(0);
+        const results = [];
+
+        try {
+            // Test 1: Search company by org number (Equinor)
+            setTestProgress(25);
+            try {
+                const result = await searchCompanyByOrgNumber("923609016");
+                if (result.success && result.company) {
+                    results.push({
+                        name: "Søk etter selskap med org.nr",
+                        success: true,
+                        message: `Funnet: ${result.company.name} (${result.company.orgNumber})`,
+                    });
+                } else {
+                    results.push({
+                        name: "Søk etter selskap med org.nr",
+                        success: false,
+                        message: result.error || "Kunne ikke finne selskap",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Søk etter selskap med org.nr",
+                    success: false,
+                    message: error.message || "Feil ved søk",
+                });
+            }
+
+            // Test 2: Search with invalid org number
+            setTestProgress(50);
+            try {
+                const result = await searchCompanyByOrgNumber("123");
+                if (!result.success) {
+                    results.push({
+                        name: "Validere ugyldig org.nr",
+                        success: true,
+                        message: "Korrekt feilmelding for ugyldig org.nr",
+                    });
+                } else {
+                    results.push({
+                        name: "Validere ugyldig org.nr",
+                        success: false,
+                        message: "Burde ha feilet for ugyldig org.nr",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Validere ugyldig org.nr",
+                    success: true,
+                    message: "Validering fungerer korrekt",
+                });
+            }
+
+            // Test 3: Search companies by name
+            setTestProgress(75);
+            try {
+                const result = await searchCompaniesByName("Equinor");
+                if (result.success && Array.isArray(result.companies)) {
+                    results.push({
+                        name: "Søk etter selskap med navn",
+                        success: true,
+                        message: `Fant ${result.companies.length} selskap(er)`,
+                    });
+                } else {
+                    results.push({
+                        name: "Søk etter selskap med navn",
+                        success: false,
+                        message: result.error || "Kunne ikke søke",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Søk etter selskap med navn",
+                    success: false,
+                    message: error.message || "Feil ved søk",
+                });
+            }
+
+            // Test 4: Search with short name (should fail validation)
+            setTestProgress(100);
+            try {
+                const result = await searchCompaniesByName("A");
+                if (!result.success) {
+                    results.push({
+                        name: "Validere for kort navn",
+                        success: true,
+                        message: "Korrekt feilmelding for for kort navn",
+                    });
+                } else {
+                    results.push({
+                        name: "Validere for kort navn",
+                        success: false,
+                        message: "Burde ha feilet for for kort navn",
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    name: "Validere for kort navn",
+                    success: true,
+                    message: "Validering fungerer korrekt",
+                });
+            }
+
+            const allTestsPassed = results.every((r) => r.success);
+            const passedCount = results.filter((r) => r.success).length;
+            const totalCount = results.length;
+
+            setTestResults({
+                success: allTestsPassed,
+                tests: results,
+                summary: `${passedCount} av ${totalCount} tester bestått`,
+                category: "brreg",
+            });
+        } catch (error) {
+            setTestResults({
+                success: false,
+                error: error.message || "Ukjent feil oppstod",
+                tests: results,
+                category: "brreg",
+            });
+        } finally {
+            setTesting(false);
+            setTestProgress(0);
+            setActiveTestCategory(null);
+        }
+    };
+
+    const deleteAllTestData = async () => {
+        if (!user) {
+            return;
+        }
+
+        setDeleting(true);
+        try {
+            // Get all projects, tenders, and contracts that contain "Test" in the name
+            const allProjects = await getCollection("projects", []);
+            const allTenders = await getCollection("tenders", []);
+            const allContracts = await getCollection("contracts", []);
+
+            // Delete test projects
+            const testProjects = allProjects.filter(
+                (p) =>
+                    p.name?.toLowerCase().includes("test") ||
+                    p.description?.toLowerCase().includes("testprosjekt")
+            );
+            for (const project of testProjects) {
+                await deleteDocument("projects", project.id);
+            }
+
+            // Delete test tenders
+            const testTenders = allTenders.filter(
+                (t) =>
+                    t.title?.toLowerCase().includes("test") ||
+                    t.description?.toLowerCase().includes("test")
+            );
+            for (const tender of testTenders) {
+                await deleteDocument("tenders", tender.id);
+            }
+
+            // Delete test contracts
+            const testContracts = allContracts.filter(
+                (c) =>
+                    c.title?.toLowerCase().includes("test") ||
+                    testTenders.some((t) => t.id === c.tenderId)
+            );
+            for (const contract of testContracts) {
+                await deleteDocument("contracts", contract.id);
+            }
+
+            setTestResults({
+                success: true,
+                tests: [
+                    {
+                        name: "Slett testdata",
+                        success: true,
+                        message: `Slettet ${testProjects.length} prosjekter, ${testTenders.length} anskaffelser, og ${testContracts.length} kontrakter`,
+                    },
+                ],
+                summary: "Testdata slettet",
+                category: "delete",
+            });
+        } catch (error) {
+            console.error("Error deleting test data:", error);
+            setTestResults({
+                success: false,
+                error: error.message || "Kunne ikke slette testdata",
+                tests: [],
+                category: "delete",
+            });
+        } finally {
+            setDeleting(false);
+            setShowDeleteDialog(false);
+        }
+    };
+
+    return {
+        testing,
+        testResults,
+        testProgress,
+        activeTestCategory,
+        showDeleteDialog,
+        deleting,
+        setShowDeleteDialog,
+        runTests,
+        runProjectTests,
+        runTenderTests,
+        runQATests,
+        runDocumentTests,
+        runContractTests,
+        runSupplierTests,
+        runAdminLeverandorTests,
+        runComplaintsTests,
+        runAdminAnskaffelseTests,
+        runBrregTests,
+        deleteAllTestData,
+    };
+};

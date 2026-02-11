@@ -1,0 +1,272 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get user document
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // Helper function to check if user is sender
+    function isSender() {
+      return isAuthenticated() && getUserData().role == 'sender';
+    }
+    
+    // Helper function to check if user is receiver
+    function isReceiver() {
+      return isAuthenticated() && getUserData().role == 'receiver';
+    }
+    
+    // Helper function to check if user owns resource
+    function isOwner(userIdField) {
+      return isAuthenticated() && resource.data[userIdField] == request.auth.uid;
+    }
+    
+    // Helper function to check if user's company owns resource
+    function isCompanyOwner(companyIdField) {
+      return isAuthenticated() && resource.data[companyIdField] == getUserData().companyId;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && getUserData().isAdmin == true;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Users can create their own profile during registration
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Users can update their own profile (limited fields)
+      allow update: if isAuthenticated() && request.auth.uid == userId
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin', 'companyId']));
+      
+      // Admins can read all users
+      allow read: if isAuthenticated() && getUserData().isAdmin == true;
+    }
+    
+    // Projects collection
+    match /projects/{projectId} {
+      // Senders can read projects from their company or that they own
+      allow read: if isAuthenticated() && (
+        resource.data.ownerCompanyId == getUserData().companyId ||
+        resource.data.ownerId == request.auth.uid ||
+        resource.data.ownerCompanyId == request.auth.uid
+      );
+      
+      // Senders can create projects for their company (or using their UID as company fallback)
+      allow create: if isSender() && (
+        request.resource.data.ownerCompanyId == getUserData().companyId ||
+        request.resource.data.ownerCompanyId == request.auth.uid
+      );
+      
+      // Senders can update projects from their company or that they own
+      allow update: if isSender() && (
+        resource.data.ownerCompanyId == getUserData().companyId ||
+        resource.data.ownerId == request.auth.uid ||
+        resource.data.ownerCompanyId == request.auth.uid
+      );
+      
+      // Senders can delete projects from their company or that they own
+      // Admins can delete any project
+      allow delete: if (
+        isAdmin() ||
+        (isSender() && (
+          resource.data.ownerCompanyId == getUserData().companyId ||
+          resource.data.ownerId == request.auth.uid ||
+          resource.data.ownerCompanyId == request.auth.uid
+        ))
+      );
+    }
+    
+    // Helper function to check if a supplier is invited to a tender
+    // Note: This checks if invitedSupplierIds array contains the user's UID
+    // You need to maintain a separate invitedSupplierIds array for security rule checks
+    function isInvitedSupplier() {
+      return request.auth.uid in resource.data.invitedSupplierIds;
+    }
+    
+    // Tenders collection
+    match /tenders/{tenderId} {
+      allow read: if isAuthenticated() && (
+        resource.data.createdBy == request.auth.uid ||
+        resource.data.ownerCompanyId == getUserData().companyId ||
+        (isReceiver() && isInvitedSupplier() && resource.data.status == 'open')
+      );
+      
+      // Senders can create tenders
+      allow create: if isSender() && request.resource.data.createdBy == request.auth.uid;
+      
+      // Senders can update tenders they created
+      // Also allow receivers to update if they're invited (for submitting bids)
+      allow update: if isAuthenticated() && (
+        (isSender() && resource.data.createdBy == request.auth.uid) ||
+        (isReceiver() && isInvitedSupplier())
+      );
+      
+      // Senders can delete tenders they created
+      // Admins can delete any tender
+      allow delete: if (
+        isAdmin() ||
+        (isSender() && resource.data.createdBy == request.auth.uid)
+      );
+      
+      // Nested: Questions and Answers (qa array)
+      // Note: Firestore doesn't support array element-level security,
+      // so we rely on document-level rules. In practice, Q&A is updated
+      // by updating the entire tender document.
+      
+      // Nested: Bids (bids array)
+      // Receivers can submit bids for tenders they're invited to
+      // This is handled at the document level - receivers can update
+      // the tender document to add their bid if they're in invitedSuppliers
+    }
+    
+    // Contracts collection
+    match /contracts/{contractId} {
+      // Users can read contracts where they are customer or supplier
+      allow read: if isAuthenticated() && (
+        resource.data.customer.companyId == getUserData().companyId ||
+        resource.data.supplier.companyId == getUserData().companyId
+      );
+      
+      // Senders can create contracts for awarded tenders
+      allow create: if isSender();
+      
+      // Both parties can update contracts (for signing, amendments)
+      allow update: if isAuthenticated() && (
+        resource.data.customer.companyId == getUserData().companyId ||
+        resource.data.supplier.companyId == getUserData().companyId
+      );
+    }
+    
+    // Companies collection (if you add one)
+    match /companies/{companyId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && getUserData().isAdmin == true;
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Users can only read their own notifications
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Users can update their own notifications (mark as read, delete)
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['userId', 'type', 'title', 'message', 'metadata', 'actionUrl', 'createdAt']));
+      
+      // Users can delete their own notifications
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Allow authenticated users to create notifications for any user
+      // Business logic in services ensures notifications are only created in appropriate contexts
+      // (e.g., when inviting suppliers, submitting bids, asking questions, etc.)
+      allow create: if isAuthenticated();
+    }
+    
+    // Complaints collection
+    match /complaints/{complaintId} {
+      // Users can read complaints from their company or that they submitted
+      // Admins can read all complaints
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.submittedBy == request.auth.uid ||
+        resource.data.submittedByCompanyId == getUserData().companyId ||
+        resource.data.submittedByCompanyId == request.auth.uid
+      );
+      
+      // Users can create complaints
+      allow create: if isAuthenticated() && 
+        request.resource.data.submittedBy == request.auth.uid;
+      
+      // Users can update complaints from their company or that they submitted
+      // Admins can update any complaint
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.submittedByCompanyId == getUserData().companyId ||
+        resource.data.submittedBy == request.auth.uid ||
+        resource.data.submittedByCompanyId == request.auth.uid
+      );
+      
+      // Only admins can delete complaints
+      allow delete: if isAdmin();
+    }
+    
+    // Document Versions collection
+    match /documentVersions/{versionId} {
+      // Users can read versions for documents they have access to
+      // Access is based on context (tender, complaint, etc.)
+      allow read: if isAuthenticated() && (
+        // For tender documents - check if user has access to the tender
+        (resource.data.context == 'tender' && 
+         exists(/databases/$(database)/documents/tenders/$(resource.data.contextId)) &&
+         (
+           get(/databases/$(database)/documents/tenders/$(resource.data.contextId)).data.createdBy == request.auth.uid ||
+           get(/databases/$(database)/documents/tenders/$(resource.data.contextId)).data.ownerCompanyId == getUserData().companyId ||
+           (isReceiver() && request.auth.uid in get(/databases/$(database)/documents/tenders/$(resource.data.contextId)).data.invitedSupplierIds)
+         )) ||
+        // For complaint documents - check if user has access to the complaint
+        (resource.data.context == 'complaint' && 
+         exists(/databases/$(database)/documents/complaints/$(resource.data.contextId)) &&
+         (
+           isAdmin() ||
+           get(/databases/$(database)/documents/complaints/$(resource.data.contextId)).data.submittedBy == request.auth.uid ||
+           get(/databases/$(database)/documents/complaints/$(resource.data.contextId)).data.submittedByCompanyId == getUserData().companyId
+         ))
+      );
+      
+      // Users can create versions when they have permission to modify the document
+      allow create: if isAuthenticated() && (
+        // For tender documents
+        (request.resource.data.context == 'tender' && 
+         exists(/databases/$(database)/documents/tenders/$(request.resource.data.contextId)) &&
+         (
+           get(/databases/$(database)/documents/tenders/$(request.resource.data.contextId)).data.createdBy == request.auth.uid ||
+           (isReceiver() && request.auth.uid in get(/databases/$(database)/documents/tenders/$(request.resource.data.contextId)).data.invitedSupplierIds)
+         )) ||
+        // For complaint documents
+        (request.resource.data.context == 'complaint' && 
+         exists(/databases/$(database)/documents/complaints/$(request.resource.data.contextId)) &&
+         (
+           isAdmin() ||
+           get(/databases/$(database)/documents/complaints/$(request.resource.data.contextId)).data.submittedByCompanyId == getUserData().companyId ||
+           get(/databases/$(database)/documents/complaints/$(request.resource.data.contextId)).data.submittedBy == request.auth.uid
+         ))
+      );
+      
+      // Users can update versions (e.g., to mark as current/not current)
+      // Only allow updating isCurrent field
+      allow update: if isAuthenticated() && (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isCurrent']) &&
+        (
+          (resource.data.context == 'tender' && 
+           exists(/databases/$(database)/documents/tenders/$(resource.data.contextId)) &&
+           get(/databases/$(database)/documents/tenders/$(resource.data.contextId)).data.createdBy == request.auth.uid) ||
+          (resource.data.context == 'complaint' && 
+           exists(/databases/$(database)/documents/complaints/$(resource.data.contextId)) &&
+           (
+             isAdmin() ||
+             get(/databases/$(database)/documents/complaints/$(resource.data.contextId)).data.submittedByCompanyId == getUserData().companyId
+           ))
+        )
+      );
+      
+      // Only admins can delete versions
+      allow delete: if isAdmin();
+    }
+    
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
